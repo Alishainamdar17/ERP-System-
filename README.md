@@ -95,7 +95,7 @@ Handles all financial transactions and reporting.
 Real-time cash flow tracking across projects.
 - Project-wise cash management
 - Add income and expense transactions
-- Cash transfers between projects
+- Cash transfers between projects 
 - Audit log for all transactions
 - Master summary across all projects
 - Cross-project tracker view
@@ -294,13 +294,12 @@ server.port=8080
 - [x] Daily Progress Report Module
 - [x] Project Records Module
 - [x] User & Role Management
-- [ ] Driver Module *(In Progress)*
-- [ ] Dispatch Module *(In Progress)*
-- [ ] Purchase Module *(Upcoming)*
-- [ ] Production Module *(Upcoming)*
-- [ ] Accounts Module *(Upcoming)*
-- [ ] Admin Dashboard *(Upcoming)*
-
+- [ ] Driver Module 
+- [ ] Dispatch Module 
+- [ ] Purchase Module 
+- [ ] Production Module
+- [ ] Accounts Module 
+- [ ] Admin Dashboard 
 ---
 
 ## 👥 Team
