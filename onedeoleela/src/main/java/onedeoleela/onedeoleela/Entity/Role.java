@@ -4,6 +4,7 @@ public enum Role {
     ADMIN,
     VP,
     COORDINATOR,
+    PLANNING,
     PRODUCTION,
     DISPATCH,
     DRIVER,
