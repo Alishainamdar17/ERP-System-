@@ -1,302 +1,3 @@
-// import React, { useEffect, useState } from "react";
-// import axios from "axios";
-//
-// function AdminDashboard() {
-//     const API = "http://localhost:8080/api/users";
-//
-//     const [users, setUsers] = useState([]);
-//     const [form, setForm] = useState({
-//         eCode: "",
-//         fullName: "",
-//         email: "",
-//         password: "",
-//         role: "USER",
-//     });
-//
-//     const [editId, setEditId] = useState(null);
-//     const [loading, setLoading] = useState(false);
-//
-//     // ================= FETCH USERS =================
-//     const fetchUsers = async () => {
-//         const res = await axios.get(API);
-//         setUsers(res.data);
-//     };
-//
-//     useEffect(() => {
-//         fetchUsers();
-//     }, []);
-//
-//     // ================= INPUT CHANGE =================
-//     const handleChange = (e) =>
-//         setForm({ ...form, [e.target.name]: e.target.value });
-//
-//     // ================= SUBMIT =================
-//     const handleSubmit = async (e) => {
-//         e.preventDefault();
-//         setLoading(true);
-//
-//         try {
-//             let payload = { ...form };
-//
-//             // do not send empty password on update
-//             if (editId && !payload.password) {
-//                 delete payload.password;
-//             }
-//
-//             if (editId) {
-//                 await axios.put(`${API}/${editId}`, payload);
-//                 alert("User Updated");
-//                 setEditId(null);
-//             } else {
-//                 await axios.post(API, payload);
-//                 alert("User Created");
-//             }
-//
-//             setForm({
-//                 eCode: "",
-//                 fullName: "",
-//                 email: "",
-//                 password: "",
-//                 role: "USER",
-//             });
-//
-//             fetchUsers();
-//         } catch (error) {
-//             alert("Backend Error");
-//         } finally {
-//             setLoading(false);
-//         }
-//     };
-//
-//     // ================= EDIT =================
-//     const handleEdit = (u) => {
-//         setForm({
-//             eCode: u.eCode,
-//             fullName: u.fullName,
-//             email: u.email,
-//             password: "",
-//             role: u.role,
-//         });
-//         setEditId(u.id);
-//     };
-//
-//     // ================= DELETE =================
-//     const handleDelete = async (id) => {
-//         if (!window.confirm("Delete user?")) return;
-//         await axios.delete(`${API}/${id}`);
-//         fetchUsers();
-//     };
-//
-//     // ================= STATS =================
-//     const totalUsers = users.length;
-//     const drivers = users.filter(u => u.role === "DRIVER").length;
-//     const admins = users.filter(u => u.role === "ADMIN").length;
-//     const dispatch = users.filter(u => u.role === "DISPATCH").length;
-//
-//
-//     return (
-//         <div className="erp">
-//
-//             {/* SIDEBAR */}
-//             <div className="sidebar">
-//                 <h2>ERP</h2>
-//                 <p>Dashboard</p>
-//                 <p>Users</p>
-//                 <p>Dispatch</p>
-//                 <p>Production</p>
-//                 <p>Reports</p>
-//                 <p>Settings</p>
-//             </div>
-//
-//             {/* MAIN AREA */}
-//             <div className="main">
-//
-//                 {/* TOPBAR */}
-//                 <div className="topbar">
-//                     <h3>User Management</h3>
-//                     <span>Admin</span>
-//                 </div>
-//
-//                 {/* CONTENT */}
-//                 <div className="content">
-//
-//                     {/* STATS */}
-//                     <div className="stats">
-//                         <div className="card">Total Users <b>{totalUsers}</b></div>
-//                         <div className="card">Drivers <b>{drivers}</b></div>
-//                         <div className="card">Admins <b>{admins}</b></div>
-//                     </div>
-//
-//                     {/* FORM */}
-//                     <div className="card">
-//                         <h3>{editId ? "Update User" : "Create User"}</h3>
-//
-//                         <form onSubmit={handleSubmit} className="form">
-//                             <input name="eCode" placeholder="E Code" value={form.eCode} onChange={handleChange} required />
-//                             <input name="fullName" placeholder="Full Name" value={form.fullName} onChange={handleChange} required />
-//                             <input type="email" name="email" placeholder="Email" value={form.email} onChange={handleChange} required />
-//
-//                             <input
-//                                 type="password"
-//                                 name="password"
-//                                 placeholder={editId ? "New Password (Optional)" : "Password"}
-//                                 value={form.password}
-//                                 onChange={handleChange}
-//                                 required={!editId}
-//                             />
-//
-//                             <select name="role" value={form.role} onChange={handleChange}>
-//                                 <option>ADMIN</option>
-//                                 <option>VP</option>
-//                                 <option>COORDINATOR</option>
-//                                 <option>PRODUCTION</option>
-//                                 <option>DISPATCH</option>
-//                                 <option>DRIVER</option>
-//                                 <option>SITE_SUPERVISOR</option>
-//                                 <option>PURCHASE</option>
-//
-//                             </select>
-//
-//                             <button disabled={loading}>
-//                                 {loading ? "Processing..." : editId ? "Update" : "Add User"}
-//                             </button>
-//                         </form>
-//                     </div>
-//
-//                     {/* TABLE */}
-//                     <div className="card">
-//                         <h3>User List</h3>
-//
-//                         <table>
-//                             <thead>
-//                             <tr>
-//                                 <th>ID</th>
-//                                 <th>E Code</th>
-//                                 <th>Name</th>
-//                                 <th>Email</th>
-//                                 <th>Role</th>
-//                                 <th>Actions</th>
-//                             </tr>
-//                             </thead>
-//
-//                             <tbody>
-//                             {users.map(u => (
-//                                 <tr key={u.id}>
-//                                     <td>{u.id}</td>
-//                                     <td>{u.eCode}</td>
-//                                     <td>{u.fullName}</td>
-//                                     <td>{u.email}</td>
-//                                     <td>
-//                                         <span className={`badge ${u.role.toLowerCase()}`}>
-//                                             {u.role}
-//                                         </span>
-//                                     </td>
-//                                     <td>
-//                                         <button onClick={() => handleEdit(u)}>Edit</button>
-//                                         <button className="danger" onClick={() => handleDelete(u.id)}>Delete</button>
-//                                     </td>
-//                                 </tr>
-//                             ))}
-//                             </tbody>
-//                         </table>
-//                     </div>
-//
-//                 </div>
-//             </div>
-//
-//             {/* ================= ERP STYLE ================= */}
-//             <style>{`
-//                 body { margin:0;font-family:Arial; }
-//
-//                 .erp { display:flex;height:100vh;background:#f1f5f9; }
-//
-//                 .sidebar {
-//                     width:220px;
-//                     background:#0f172a;
-//                     color:white;
-//                     padding:20px;
-//                 }
-//
-//                 .sidebar p {
-//                     padding:10px;
-//                     cursor:pointer;
-//                 }
-//
-//                 .sidebar p:hover {
-//                     background:#1e293b;
-//                 }
-//
-//                 .main { flex:1;display:flex;flex-direction:column; }
-//
-//                 .topbar {
-//                     background:white;
-//                     padding:15px;
-//                     display:flex;
-//                     justify-content:space-between;
-//                     border-bottom:1px solid #ddd;
-//                 }
-//
-//                 .content { padding:20px;overflow:auto; }
-//
-//                 .stats { display:flex;gap:20px;margin-bottom:20px; }
-//
-//                 .card {
-//                     background:white;
-//                     padding:20px;
-//                     border-radius:8px;
-//                     box-shadow:0 2px 6px rgba(0,0,0,.1);
-//                     margin-bottom:20px;
-//                 }
-//
-//                 .form { display:flex;gap:10px;flex-wrap:wrap; }
-//
-//                 input,select {
-//                     padding:8px;
-//                     border:1px solid #ccc;
-//                     border-radius:4px;
-//                 }
-//
-//                 button {
-//                     background:#2563eb;
-//                     color:white;
-//                     border:none;
-//                     padding:8px 12px;
-//                     border-radius:4px;
-//                     cursor:pointer;
-//                 }
-//
-//                 button:hover { background:#1d4ed8; }
-//
-//                 .danger { background:#dc2626; }
-//
-//                 table { width:100%;border-collapse:collapse; }
-//
-//                 th,td {
-//                     padding:10px;
-//                     border-bottom:1px solid #eee;
-//                     text-align:left;
-//                 }
-//
-//                 .badge {
-//                     padding:4px 8px;
-//                     border-radius:4px;
-//                     color:white;
-//                     font-size:12px;
-//                 }
-//
-//                 .admin { background:#16a34a; }
-//                 .driver { background:#2563eb; }
-//                 .dispatch { background:#9333ea; }
-//                 .production { background:#f59e0b; }
-//                 .coordinator { background:#14b8a6; }
-//                 .vp { background:#ef4444; }
-//             `}</style>
-//         </div>
-//     );
-// }
-//
-// export default AdminDashboard;
-
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -493,11 +194,21 @@ function AdminDashboard() {
                         </div>
                         <div className="stat-card powder-coating">
                             <div className="stat-icon">
-                                <FaFillDrip /> {/* or FaIndustry / FaLayerGroup */}
+                                <FaFillDrip />
                             </div>
                             <div className="stat-data">
                                 <h3>{getCount("POWDER_COATING")}</h3>
                                 <p>Powder Coating</p>
+                            </div>
+                        </div>
+                        {/* ✅ NEW: PLANNING stat card */}
+                        <div className="stat-card planning">
+                            <div className="stat-icon">
+                                <FaChartLine />
+                            </div>
+                            <div className="stat-data">
+                                <h3>{getCount("PLANNING")}</h3>
+                                <p>Planning</p>
                             </div>
                         </div>
                     </div>
@@ -538,7 +249,8 @@ function AdminDashboard() {
                                         <option value="SITE_SUPERVISOR">SITE_SUPERVISOR</option>
                                         <option value="PURCHASE">PURCHASE</option>
                                         <option value="POWDER_COATING">POWDER_COATING</option>
-
+                                        {/* ✅ NEW: PLANNING option */}
+                                        <option value="PLANNING">PLANNING</option>
                                     </select>
                                 </div>
                                 <button className={`submit-btn ${editId ? 'update' : ''}`} disabled={loading}>
@@ -630,25 +342,29 @@ function AdminDashboard() {
 
                 .erp-content { padding: 30px; }
 
-                /* DYNAMIC STATS GRID - 3 columns, auto-expanding rows */
+                /* DYNAMIC STATS GRID - auto-expanding rows */
                 .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
                 .stat-card { background: white; padding: 15px; border-radius: 12px; display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 4px solid #cbd5e1; }
                 .stat-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
-                
-                .stat-card.total { border-left-color: #6366f1; }
-                .stat-card.admin { border-left-color: #ef4444; }
-                .stat-card.vp { border-left-color: #8b5cf6; }
-                .stat-card.coord { border-left-color: #ec4899; }
-                .stat-card.prod { border-left-color: #f59e0b; }
-                .stat-card.dispatch { border-left-color: #10b981; }
-                .stat-card.driver { border-left-color: #3b82f6; }
-                .stat-card.site { border-left-color: #06b6d4; }
-                .stat-card.purchase { border-left-color: #71717a; }
 
-                .total .stat-icon { background: #e0e7ff; color: #4338ca; }
-                .admin .stat-icon { background: #fee2e2; color: #991b1b; }
-                .vp .stat-icon { background: #ede9fe; color: #5b21b6; }
-                .driver .stat-icon { background: #dbeafe; color: #1e40af; }
+                .stat-card.total          { border-left-color: #6366f1; }
+                .stat-card.admin          { border-left-color: #ef4444; }
+                .stat-card.vp             { border-left-color: #8b5cf6; }
+                .stat-card.coord          { border-left-color: #ec4899; }
+                .stat-card.prod           { border-left-color: #f59e0b; }
+                .stat-card.dispatch       { border-left-color: #10b981; }
+                .stat-card.driver         { border-left-color: #3b82f6; }
+                .stat-card.site           { border-left-color: #06b6d4; }
+                .stat-card.purchase       { border-left-color: #71717a; }
+                .stat-card.powder-coating { border-left-color: #f97316; }
+                .stat-card.planning       { border-left-color: #0ea5e9; }
+
+                .total .stat-icon          { background: #e0e7ff; color: #4338ca; }
+                .admin .stat-icon          { background: #fee2e2; color: #991b1b; }
+                .vp .stat-icon             { background: #ede9fe; color: #5b21b6; }
+                .driver .stat-icon         { background: #dbeafe; color: #1e40af; }
+                .powder-coating .stat-icon { background: #ffedd5; color: #c2410c; }
+                .planning .stat-icon       { background: #e0f2fe; color: #0369a1; }
 
                 .stat-data h3 { margin: 0; font-size: 20px; color: #1e293b; }
                 .stat-data p { margin: 0; color: #64748b; font-size: 12px; font-weight: 600; }
@@ -656,36 +372,52 @@ function AdminDashboard() {
                 .action-grid { display: grid; grid-template-columns: 350px 1fr; gap: 25px; }
                 .glass-card { background: white; border-radius: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
                 .card-header { padding: 15px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; gap: 10px; font-weight: 600; }
-                
+
                 .modern-form { padding: 20px; display: flex; flex-direction: column; gap: 15px; }
                 .input-group { display: flex; flex-direction: column; gap: 5px; }
                 .input-group label { font-size: 12px; font-weight: 700; color: #475569; }
                 .input-group input, .input-group select { padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; outline: none; }
-                
+
                 .submit-btn { background: var(--primary); color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; display: flex; justify-content: center; }
                 .submit-btn.update { background: #10b981; }
+                .cancel-btn { background: #f1f5f9; color: #475569; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 5px; }
 
                 .modern-table { width: 100%; border-collapse: collapse; }
                 .modern-table th { background: #f8fafc; padding: 15px; text-align: left; font-size: 11px; color: #64748b; text-transform: uppercase; }
                 .modern-table td { padding: 12px 15px; border-bottom: 1px solid #f1f5f9; }
                 .user-name { font-weight: 600; color: #1e293b; font-size: 14px; }
                 .user-code { font-size: 11px; color: #94a3b8; }
-                
+
                 .role-badge { padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
-                .role-badge.admin { background: #fee2e2; color: #991b1b; }
-                .role-badge.driver { background: #dbeafe; color: #1e40af; }
-                .role-badge.production { background: #fef3c7; color: #92400e; }
-                .role-badge.vp { background: #ede9fe; color: #5b21b6; }
-                
+                .role-badge.admin          { background: #fee2e2; color: #991b1b; }
+                .role-badge.driver         { background: #dbeafe; color: #1e40af; }
+                .role-badge.production     { background: #fef3c7; color: #92400e; }
+                .role-badge.vp             { background: #ede9fe; color: #5b21b6; }
+                .role-badge.coordinator    { background: #fce7f3; color: #9d174d; }
+                .role-badge.dispatch       { background: #d1fae5; color: #065f46; }
+                .role-badge.site_supervisor{ background: #cffafe; color: #155e75; }
+                .role-badge.purchase       { background: #f4f4f5; color: #3f3f46; }
+                .role-badge.powder_coating { background: #ffedd5; color: #c2410c; }
+                .role-badge.planning       { background: #e0f2fe; color: #0369a1; }
+
                 .action-btns { display: flex; gap: 8px; justify-content: flex-end; }
                 .action-btns button { padding: 8px; border-radius: 8px; border: none; cursor: pointer; }
-                .btn-edit { background: #f1f5f9; color: #475569; }
+                .btn-edit   { background: #f1f5f9; color: #475569; }
                 .btn-delete { background: #fee2e2; color: #dc2626; }
-                
+
+                .search-box { display: flex; align-items: center; gap: 8px; background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 12px; }
+                .search-box input { border: none; outline: none; font-size: 13px; }
+                .list-header { justify-content: space-between; }
+                .text-right { text-align: right; }
+                .table-container { overflow-y: auto; max-height: 500px; }
+
                 .spin { animation: rotate 1s linear infinite; }
                 .spin-large { font-size: 30px; margin-bottom: 10px; animation: rotate 1s linear infinite; color: var(--primary); }
                 @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
                 .loader-container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; color: #64748b; }
+
+                .admin-profile { display: flex; align-items: center; gap: 10px; }
+                .admin-avatar { background: var(--primary); color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; }
             `}</style>
 
         </div>
