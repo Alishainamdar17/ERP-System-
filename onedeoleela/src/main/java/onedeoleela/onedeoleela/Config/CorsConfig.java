@@ -15,7 +15,7 @@ public class CorsConfig {
     @Value("${frontend.url}")
     private String frontendUrl;
 
-    @Bean
+    @Bean 
     public CorsFilter corsFilter() {
 
         CorsConfiguration config = new CorsConfiguration();
