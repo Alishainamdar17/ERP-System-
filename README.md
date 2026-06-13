@@ -138,7 +138,7 @@ Limited search/filter support
 📄 License
 
 This project is currently proprietary / internal use (update if open-source).
-
+ 
 ⭐ Acknowledgement
 
 If this system helps your workflow or learning, consider starring the repository.
