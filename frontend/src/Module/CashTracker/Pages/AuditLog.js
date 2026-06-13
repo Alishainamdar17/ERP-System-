@@ -4,7 +4,7 @@ const BASE = process.env.REACT_APP_API_URL || "http://localhost:8080";
 
 const dotColor = { CREATE: "#639922", UPDATE: "#BA7517", DELETE: "#E24B4A" };
 
-const s = {
+const s = { 
   screen:  { padding: "20px 24px", fontFamily: "sans-serif" },
   header:  { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 },
   title:   { fontSize: 17, fontWeight: 500, color: "#1a1a18" },
