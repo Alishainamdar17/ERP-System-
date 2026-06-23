@@ -1,1440 +1,2819 @@
-import React, { useEffect, useState, useCallback } from "react";
-import axios from "axios";
-import { useNavigate } from "react-router-dom";
-import {
-  FaChartLine, FaSignOutAlt, FaPlus, FaTrash,
-  FaEdit, FaSave, FaTimes, FaChevronDown, FaChevronRight,
-  FaFolderOpen, FaFolder, FaClipboardList, FaCheckCircle,
-  FaCircleNotch, FaSearch, FaBriefcase, FaCalendarAlt,
-  FaFileExcel, FaExpandAlt, FaCompressAlt, FaFilePdf, FaLink, FaUnlink,
-  FaColumns, FaFilter, FaHistory, FaClock, FaExclamationTriangle,
-  FaArrowRight, FaInfoCircle, FaTable
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import ProjectManagerPage from "../Module/Coordinator/Pages/ProjectManagerPage";import {
+  FaPlus, FaArrowLeft, FaEdit, FaTrash, FaHistory,
+  FaSave, FaTimes, FaExclamationTriangle,
+  FaProjectDiagram, FaTools, FaListAlt, FaHome,
+  FaChevronRight, FaSearch, FaCalendarAlt, FaLink,
+  FaCheck, FaExclamationCircle, FaClock, FaBan,
+  FaDownload, FaUser, FaBuilding, FaChevronDown, FaChevronUp,
+  FaBell, FaColumns, FaFileExcel,
 } from "react-icons/fa";
 
-const API_BASE = process.env.REACT_APP_API_URL;
-const API_TASK = `${API_BASE}/planning_project/api/tasks`;
-const API_PROJECT = `${API_BASE}/projects`;
+import WorkTemplatePage, { SaveAsTemplateModal } from "../Module/Planning/WorkTemplatePage";
+import { FaLayerGroup } from "react-icons/fa";
+import { FaRegClock } from "react-icons/fa";
+import axios from "axios";
+import XLSX from "xlsx-js-style";
 
-const DEPARTMENTS = [
-  "", "DESIGN", "PURCHASE", "PRODUCTION",
-  "POWDER COATING", "DISPATCH", "PROJECT TEAM", "BILLING", "ADMIN",
-  "QC DEPT.", "FACTORY"
+const BASE     = process.env.REACT_APP_API_URL || "http://localhost:8080";
+const PROJ_API = `${BASE}/projects`;
+const PLAN_API = `${BASE}/api/planning`;
+
+const STATUS_OPTIONS = ["NOT STARTED", "IN PROGRESS", "DONE", "ON HOLD", "CANCELLED"];
+const DEPARTMENTS    = [
+  "PROJECT", "DESIGN", "PURCHASE", "PRODUCTION",
+  "POWDER COATING", "SITE", "ACCOUNTS","DISPATCH","COORDINATOR","BILLING", "ACCOUNT", "MD", ,"OTHER",
 ];
-const STATUSES = ["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "DELAYED", "ON_HOLD"];
+
+const LINK_TRIGGER_OPTIONS = [
+  { value: "END_TO_START",    label: "When linked item ENDS → this starts" },
+  { value: "START_TO_START",  label: "When linked item STARTS → this starts" },
+  { value: "MIDDLE_TO_START", label: "When linked item is at MID-POINT → this starts" },
+];
+
 const STATUS_META = {
-  NOT_STARTED: { bg: "#f1f5f9", color: "#64748b",  border: "#cbd5e1", label: "Not Started" },
-  IN_PROGRESS:  { bg: "#dbeafe", color: "#1d4ed8",  border: "#93c5fd", label: "In Progress" },
-  COMPLETED:    { bg: "#dcfce7", color: "#15803d",  border: "#86efac", label: "Completed" },
-  DELAYED:      { bg: "#fee2e2", color: "#b91c1c",  border: "#fca5a5", label: "Delayed" },
-  ON_HOLD:      { bg: "#fef9c3", color: "#a16207",  border: "#fde047", label: "On Hold" },
-  DONE:         { bg: "#dcfce7", color: "#15803d",  border: "#86efac", label: "Done" },
+  "DONE":        { bg: "#d1fae5", color: "#065f46", icon: <FaCheck size={9}/> },
+  "IN PROGRESS": { bg: "#dbeafe", color: "#1e40af", icon: <FaClock size={9}/> },
+  "NOT STARTED": { bg: "#f1f5f9", color: "#475569", icon: <FaRegClock size={9}/> },
+  "ON HOLD":     { bg: "#fef9c3", color: "#92400e", icon: <FaExclamationCircle size={9}/> },
+  "CANCELLED":   { bg: "#fee2e2", color: "#991b1b", icon: <FaBan size={9}/> },
 };
 
-const TASK_TYPES = [
-  { v: "B", label: "Basic Task",       color: "#3b82f6" },
-  { v: "P", label: "Predecessor Dep",  color: "#8b5cf6" },
-  { v: "R", label: "Review",           color: "#f59e0b" },
-  { v: "X", label: "Milestone",        color: "#ec4899" },
-  { v: "O", label: "Optional",         color: "#06b6d4" },
-  { v: "G", label: "Gate",             color: "#10b981" },
-];
-const TYPE_META = TASK_TYPES.reduce((a, t) => ({ ...a, [t.v]: t }), {});
-
-const ALL_PDF_COLUMNS = [
-  { key: "wbsId",           label: "WBS",           defaultOn: true  },
-  { key: "name",            label: "Task / Details", defaultOn: true  },
-  { key: "taskType",        label: "Type",           defaultOn: true  },
-  { key: "startDate",       label: "Start Date",     defaultOn: true  },
-  { key: "endDate",         label: "End Date",       defaultOn: true  },
-  { key: "prevStartDate",   label: "Prev Start",     defaultOn: true  },
-  { key: "prevEndDate",     label: "Prev End",       defaultOn: true  },
-  { key: "dateChangeReason",label: "Change Reason",  defaultOn: true  },
-  { key: "days",            label: "Days",           defaultOn: true  },
-  { key: "department",      label: "Department",     defaultOn: true  },
-  { key: "actionPerson",    label: "Action Person",  defaultOn: true  },
-  { key: "quantitySqft",    label: "Qty (sqft)",     defaultOn: false },
-  { key: "progressPercent", label: "Progress",       defaultOn: true  },
-  { key: "status",          label: "Status",         defaultOn: true  },
-  { key: "remark",          label: "Remark",         defaultOn: true  },
-  { key: "dependency",      label: "Depends On",     defaultOn: true  },
-];
-
-// ── helpers ──
-const fmtDate = v => { if (!v) return ""; return String(v).substring(0, 10); };
-const calcDays = (s, e) => {
-  if (!s || !e) return "-";
-  const d = Math.ceil((new Date(fmtDate(e)) - new Date(fmtDate(s))) / 86400000);
-  return d >= 0 ? d : "-";
+const PROJECT_STATUS_META = {
+  "ONGOING":   { bg: "#e0f2fe", color: "#075985" },
+  "COMPLETED": { bg: "#d1fae5", color: "#065f46" },
+  "DELAYED":   { bg: "#fee2e2", color: "#991b1b" },
+  "PLANNED":   { bg: "#f1f5f9", color: "#475569" },
 };
-const fmtDisplay = dateStr => {
-  if (!dateStr) return "—";
+
+const FIELD_LABELS = {
+  startDate:    "Start Date",
+  endDate:      "End Date",
+  lineItemName: "Line Item Name",
+  department:   "Department",
+  actionPerson: "Assigned Person",
+  status:       "Status",
+  remark:       "Remark",
+  srNo:         "SR No",
+};
+
+// All exportable fields with their labels
+const EXPORT_FIELDS = [
+  { key: "lineItemName", label: "Line Item" },
+  { key: "revNo",        label: "Rev #" },
+  { key: "whatChanged",  label: "What Changed" },
+  { key: "from",         label: "From" },
+  { key: "to",           label: "To" },
+  { key: "shift",        label: "Shift (days)" },
+  { key: "reason",       label: "Reason" },
+  { key: "changedBy",    label: "Changed By" },
+  { key: "changedAt",    label: "Changed At" },
+  { key: "alsoAffected", label: "Also Affected" },
+];
+
+// ─── Date helpers ────────────────────────────────────────────────────────────
+const daysBetween = (a, b) => {
+  if (!a || !b) return 0;
+  return Math.round((new Date(b) - new Date(a)) / 86400000);
+};
+
+const addDaysToDate = (dateStr, days) => {
+  if (!dateStr) return dateStr;
   const d = new Date(dateStr);
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
 };
 
-// ── Local date history storage ──
-const HISTORY_KEY = "task_date_history";
-const getHistory = () => {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "{}"); }
-  catch { return {}; }
-};
-const saveHistory = (taskId, entry) => {
-  const all = getHistory();
-  if (!all[taskId]) all[taskId] = [];
-  all[taskId].unshift(entry);
-  if (all[taskId].length > 20) all[taskId] = all[taskId].slice(0, 20);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
-};
-const getTaskHistory = taskId => {
-  const all = getHistory();
-  return all[taskId] || [];
+const midDate = (start, end) => {
+  if (!start || !end) return null;
+  const s = new Date(start), e = new Date(end);
+  return new Date((s.getTime() + e.getTime()) / 2).toISOString().split("T")[0];
 };
 
-// ══════════════════════════════════════════════════════
-// DATE HISTORY MODAL
-// ══════════════════════════════════════════════════════
-function DateHistoryModal({ task, onClose }) {
-  const history = getTaskHistory(task.id);
-  return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-head">
-          <div className="modal-head-left">
-            <FaHistory size={14} style={{ color: "#6366f1" }} />
-            <div>
-              <div className="modal-title">Date Change History</div>
-              <div className="modal-sub">{task.name}</div>
-            </div>
-          </div>
-          <button className="icon-btn" onClick={onClose}><FaTimes size={12} /></button>
-        </div>
-        <div className="modal-body">
-          {history.length === 0 ? (
-            <div className="empty-hist">
-              <FaHistory size={28} />
-              <p>No date change history for this task.</p>
-              <span>History is recorded whenever you change start or end dates.</span>
-            </div>
-          ) : (
-            <div className="hist-list">
-              {history.map((h, i) => (
-                <div key={i} className={`hist-item ${i === 0 ? "hist-latest" : ""}`}>
-                  <div className="hist-meta">
-                    <span className={`hist-label ${i === 0 ? "label-latest" : "label-old"}`}>
-                      {i === 0 ? "📍 Latest" : `#${history.length - i}`}
-                    </span>
-                    <span className="hist-time">{h.changedAt ? new Date(h.changedAt).toLocaleString("en-IN") : ""}</span>
-                  </div>
-                  <div className="hist-dates">
-                    <div className="hist-prev">
-                      <span className="hist-dtlabel">PREVIOUS</span>
-                      <span>{fmtDisplay(h.prevStartDate)} → {fmtDisplay(h.prevEndDate)}</span>
-                    </div>
-                    <FaArrowRight size={10} style={{ color: "#94a3b8", flexShrink: 0 }} />
-                    <div className="hist-new">
-                      <span className="hist-dtlabel">NEW</span>
-                      <span>{fmtDisplay(h.newStartDate)} → {fmtDisplay(h.newEndDate)}</span>
-                    </div>
-                  </div>
-                  {h.reason && (
-                    <div className="hist-reason">
-                      <strong>Reason:</strong> {h.reason}
-                    </div>
-                  )}
-                  {h.changedBy && <div className="hist-by">Changed by: <strong>{h.changedBy}</strong></div>}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="modal-foot">
-          <div />
-          <button className="btn-ghost" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
+const fmt = (d) =>
+  d ? new Date(d).toLocaleDateString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+  }) : "—";
 
-// ══════════════════════════════════════════════════════
-// DATE CHANGE REASON MODAL
-// ══════════════════════════════════════════════════════
-function DateReasonModal({ task, newStart, newEnd, onConfirm, onSkip, onCancel }) {
-  const [reason, setReason] = useState("");
-  return (
-    <div className="overlay">
-      <div className="modal" style={{ maxWidth: 460 }}>
-        <div className="modal-head">
-          <div className="modal-head-left">
-            <FaExclamationTriangle size={14} style={{ color: "#f59e0b" }} />
-            <div>
-              <div className="modal-title">Date Change Detected</div>
-              <div className="modal-sub">Provide a reason for changing dates</div>
-            </div>
-          </div>
-        </div>
-        <div className="modal-body" style={{ padding: "16px 20px" }}>
-          <div className="date-diff-row">
-            <div className="diff-prev">
-              <div className="diff-label">PREVIOUS</div>
-              <div className="diff-val">{fmtDisplay(fmtDate(task.startDate))} → {fmtDisplay(fmtDate(task.endDate))}</div>
-            </div>
-            <FaArrowRight style={{ color: "#94a3b8" }} />
-            <div className="diff-new">
-              <div className="diff-label">NEW</div>
-              <div className="diff-val">{fmtDisplay(newStart)} → {fmtDisplay(newEnd)}</div>
-            </div>
-          </div>
-          <div className="field-group">
-            <label className="field-label">Reason for Date Change *</label>
-            <textarea
-              autoFocus value={reason} onChange={e => setReason(e.target.value)}
-              placeholder="e.g. Client requested revision, Material delayed..."
-              className="reason-area"
-            />
-          </div>
-          <div className="info-note"><FaInfoCircle size={11} /> Previous dates will be stored in history and viewable via the 🕐 button.</div>
-        </div>
-        <div className="modal-foot">
-          <button className="btn-ghost" onClick={onCancel}>Cancel</button>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn-ghost" onClick={onSkip}>Skip Reason</button>
-            <button className="btn-primary" disabled={!reason.trim()} onClick={() => onConfirm(reason)}>
-              <FaSave size={11} /> Save with Reason
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const fmtDateTime = (d) =>
+  d ? new Date(d).toLocaleString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }) : "—";
 
-// ══════════════════════════════════════════════════════
-// PDF EXPORT MODAL
-// ══════════════════════════════════════════════════════
-function PDFExportModal({ tasks, selectedProject, deps, onClose }) {
-  const today = new Date().toISOString().substring(0, 10);
-  const [cols, setCols] = useState(() =>
-    ALL_PDF_COLUMNS.reduce((acc, c) => ({ ...acc, [c.key]: c.defaultOn }), {})
-  );
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [filterType, setFilterType] = useState("all");
-  const [selMonth, setSelMonth] = useState(today.substring(0, 7));
-  const [groupByWO, setGroupByWO] = useState(true);
-  const [sortBy, setSortBy] = useState("startDate");
+// ─── Nav config ──────────────────────────────────────────────────────────────
+const NAV = [
+  { key: "home",      icon: FaHome,           label: "Dashboard",      color: "#10b981" },
+  { key: "projects",  icon: FaProjectDiagram, label: "Projects",       color: "#3b82f6" },
+  { key: "works",     icon: FaTools,          label: "Works",          color: "#8b5cf6" },
+  { key: "lineItems", icon: FaListAlt,        label: "Line Items",     color: "#f59e0b" },
+  { key: "revisions", icon: FaColumns,        label: "Revisions",      color: "#06b6d4" },
+  { key: "history",   icon: FaHistory,        label: "Change History", color: "#ef4444" },
+  { key: "templates", icon: FaLayerGroup,     label: "Templates",      color: "#8b5cf6" },
+  { key: "notifications", icon: FaBell,       label: "Notifications",  color: "#f97316" },
+];
 
-  const toggleCol = key => setCols(prev => ({ ...prev, [key]: !prev[key] }));
-  const allOn = ALL_PDF_COLUMNS.every(c => cols[c.key]);
-  const toggleAll = () => setCols(ALL_PDF_COLUMNS.reduce((acc, c) => ({ ...acc, [c.key]: !allOn }), {}));
-  const activeCols = ALL_PDF_COLUMNS.filter(c => cols[c.key]);
-  const lineItems = tasks.filter(t => t.parentId);
 
-  const applyFilter = list => {
-    if (filterType === "range") return list.filter(t => {
-      const sd = fmtDate(t.startDate), ed = fmtDate(t.endDate);
-      if (dateFrom && sd && sd < dateFrom) return false;
-      if (dateTo && ed && ed > dateTo) return false;
-      return true;
+function exportToExcel({ history, selectedItems, selectedFields, projectName, workName, sheetLabel }) {
+  if (!history || history.length === 0) { alert("No data to export."); return; }
+
+  const byItem = {};
+  [...history]
+    .sort((a, b) => new Date(a.changedAt) - new Date(b.changedAt))
+    .forEach(h => {
+      const key = h.lineItemName || "Unknown";
+      if (!byItem[key]) byItem[key] = [];
+      byItem[key].push(h);
     });
-    if (filterType === "month") return list.filter(t => {
-      const sd = fmtDate(t.startDate), ed = fmtDate(t.endDate);
-      return (sd && sd.startsWith(selMonth)) || (ed && ed.startsWith(selMonth));
-    });
-    return list;
-  };
-  const filteredCount = applyFilter(lineItems).length;
 
-  const doExport = () => {
-    const woMap = {}, taskMap = {};
-    tasks.filter(t => !t.parentId).forEach(w => { woMap[w.id] = w; });
-    tasks.forEach(t => { taskMap[t.id] = t; });
-    let flat = applyFilter([...lineItems]);
-    flat.sort((a, b) => {
-      if (sortBy === "startDate") return (new Date(fmtDate(a.startDate)||"9999")) - (new Date(fmtDate(b.startDate)||"9999"));
-      if (sortBy === "department") return (a.department||"").localeCompare(b.department||"");
-      if (sortBy === "status") return (a.status||"").localeCompare(b.status||"");
-      return 0;
+  const wb = XLSX.utils.book_new();
+
+  // ── Summary sheet ──────────────────────────────────────────────────────────
+  const summaryData = [
+    ["CHANGE HISTORY REPORT"],
+    [],
+    ["Project",       projectName || "—"],
+    ["Work",          workName    || "—"],
+    ["Downloaded",    fmtDateTime(new Date().toISOString())],
+    ["Total Changes", history.filter(h => selectedItems.includes(h.lineItemName || "Unknown")).length],
+    [],
+  ];
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+  summaryWs["!cols"] = [{ wch: 20 }, { wch: 50 }];
+  XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
+
+  const filteredItems = Object.entries(byItem)
+    .filter(([name]) => selectedItems.includes(name));
+
+  const ALL_DATA_ROW_DEFS = [
+    { key: "whatChanged", label: "WHAT CHANGED", render: h => FIELD_LABELS[h.field] || h.field || "—" },
+    { key: "from",        label: "FROM",         render: h => h.field?.includes("Date") ? fmt(h.oldValue) : (h.oldValue || "—") },
+    { key: "to",          label: "TO",           render: h => h.field?.includes("Date") ? fmt(h.newValue) : (h.newValue || "—") },
+    { key: "reason",      label: "REASON",       render: h => h.reason || "—" },
+    { key: "changedBy",   label: "CHANGED BY",   render: h => h.changedBy || "System" },
+    { key: "changedAt",   label: "CHANGED AT",   render: h => fmtDateTime(h.changedAt) },
+  ];
+
+  const activeDataRowDefs = (selectedFields && selectedFields.length > 0)
+    ? ALL_DATA_ROW_DEFS.filter(def => selectedFields.includes(def.key))
+    : ALL_DATA_ROW_DEFS;
+
+  // ── Pivot / Matrix sheet ───────────────────────────────────────────────────
+  const rows   = [];
+  const merges = [];
+  let currentRow = 0;
+
+  rows.push(["CHANGE HISTORY REPORT"]);
+  rows.push([
+    `Project: ${projectName || "—"}`, "",
+    `Work: ${workName || "—"}`, "",
+    `Downloaded: ${fmtDateTime(new Date().toISOString())}`, "",
+    `Total Changes: ${history.filter(h => selectedItems.includes(h.lineItemName || "Unknown")).length}`,
+  ]);
+  rows.push([]);
+  currentRow = 3;
+
+  filteredItems.forEach(([itemName, changes]) => {
+    const totalCols = 1 + changes.length;
+
+    // LINE ITEM header row
+    const lineItemRow = [`LINE ITEM: ${itemName}`];
+    for (let i = 1; i < totalCols; i++) lineItemRow.push("");
+    rows.push(lineItemRow);
+    merges.push({ s: { r: currentRow, c: 0 }, e: { r: currentRow, c: totalCols - 1 } });
+    currentRow++;
+
+    // REV column header row
+    const revHeaderRow = ["FIELD"];
+    changes.forEach((h, i) => {
+      const isDate = h.field?.includes("Date");
+      const diff   = isDate ? daysBetween(h.oldValue, h.newValue) : 0;
+      const badge  = diff !== 0 ? ` (${diff > 0 ? "+" : ""}${diff}D)` : "";
+      revHeaderRow.push(`REV ${i + 1}${badge}`);
     });
-    const thCells = activeCols.map(c => `<th>${c.label}</th>`).join("");
-    const buildCells = t => {
-      const sm = STATUS_META[t.status] || STATUS_META.NOT_STARTED;
-      const tm = TYPE_META[t.taskType];
-      const sd = fmtDate(t.startDate), ed = fmtDate(t.endDate);
-      const psd = fmtDate(t.prevStartDate), ped = fmtDate(t.prevEndDate);
-      const depInfo = deps[t.id];
-      const depTask = depInfo ? taskMap[depInfo.parentId] : null;
-      const hasDiff = (psd && psd !== sd) || (ped && ped !== ed);
-      const cellMap = {
-        wbsId: `<td>${t.wbsId||"—"}</td>`,
-        name: `<td style="text-align:left">${t.name}</td>`,
-        taskType: tm ? `<td><span style="background:${tm.color}22;color:${tm.color};padding:2px 6px;border-radius:3px;font-weight:700">${tm.v}</span></td>` : `<td>—</td>`,
-        startDate: `<td style="color:${hasDiff?"#15803d":"inherit"};font-weight:${hasDiff?"700":"400"}">${sd||"—"}</td>`,
-        endDate: `<td style="color:${hasDiff?"#15803d":"inherit"};font-weight:${hasDiff?"700":"400"}">${ed||"—"}</td>`,
-        prevStartDate: `<td style="color:${hasDiff?"#b91c1c":"#94a3b8"};text-decoration:${hasDiff?"line-through":"none"}">${psd||"—"}</td>`,
-        prevEndDate: `<td style="color:${hasDiff?"#b91c1c":"#94a3b8"};text-decoration:${hasDiff?"line-through":"none"}">${ped||"—"}</td>`,
-        dateChangeReason: `<td style="text-align:left">${t.dateChangeReason||"—"}</td>`,
-        days: `<td>${calcDays(sd,ed)}</td>`,
-        department: `<td>${t.department||"—"}</td>`,
-        actionPerson: `<td>${t.actionPerson||"—"}</td>`,
-        quantitySqft: `<td>${t.quantitySqft||"—"}</td>`,
-        progressPercent: `<td><div style="display:flex;align-items:center;gap:4px;justify-content:center"><div style="width:36px;height:4px;background:#e2e8f0;border-radius:2px;overflow:hidden"><div style="width:${t.progressPercent||0}%;height:4px;background:#6366f1"></div></div><span>${t.progressPercent||0}%</span></div></td>`,
-        status: `<td><span style="background:${sm.bg};color:${sm.color};padding:2px 7px;border-radius:4px;font-size:8pt;font-weight:700">${sm.label}</span></td>`,
-        remark: `<td style="text-align:left">${t.remark||"—"}</td>`,
-        dependency: `<td>${depTask ? `${depTask.wbsId||""} ${depTask.name} (+${depInfo.lag||0}d)` : "—"}</td>`,
-      };
-      return activeCols.map(c => cellMap[c.key]||"<td>—</td>").join("");
+    rows.push(revHeaderRow);
+    currentRow++;
+
+    // Only render checked data rows
+    activeDataRowDefs.forEach(({ label, render }) => {
+      const row = [label];
+      changes.forEach(h => row.push(render(h)));
+      rows.push(row);
+      currentRow++;
+    });
+
+    rows.push([]);
+    currentRow++;
+  });
+
+  // ── Build worksheet ────────────────────────────────────────────────────────
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!merges"] = merges;
+
+  // ── Style: Report title (row 0) ────────────────────────────────────────────
+  const titleCell = XLSX.utils.encode_cell({ r: 0, c: 0 });
+  if (ws[titleCell]) {
+    ws[titleCell].s = {
+      font:      { bold: true, sz: 14, color: { rgb: "FFFFFF" }, name: "Arial" },
+      fill:      { fgColor: { rgb: "0F172A" } },
+      alignment: { horizontal: "left", vertical: "center" },
     };
-    let rows = "";
-    if (groupByWO) {
-      const groups = {};
-      flat.forEach(t => { if (!groups[t.parentId]) groups[t.parentId] = []; groups[t.parentId].push(t); });
-      Object.entries(groups).forEach(([woId, items]) => {
-        const wo = woMap[woId] || {};
-        rows += `<tr><td colspan="${activeCols.length}" style="background:#1e3a5f;color:#fff;padding:7px 10px;font-weight:700;text-align:left">📋 ${wo.name||"Work Order"} ${wo.woNumber ? `· WO#: ${wo.woNumber}` : ""} · ${items.length} items</td></tr>`;
-        items.forEach((t, i) => { rows += `<tr class="${i%2===0?"even":""}">${buildCells(t)}</tr>`; });
-      });
-    } else {
-      flat.forEach((t, i) => { rows += `<tr class="${i%2===0?"even":""}">${buildCells(t)}</tr>`; });
+  }
+
+  // ── Style: Info row (row 1) ────────────────────────────────────────────────
+  for (let c = 0; c < 7; c++) {
+    const cell = XLSX.utils.encode_cell({ r: 1, c });
+    if (ws[cell]) {
+      ws[cell].s = {
+        font: { bold: true, sz: 10, color: { rgb: "334155" }, name: "Arial" },
+        fill: { fgColor: { rgb: "F1F5F9" } },
+      };
     }
-    const done = flat.filter(t => t.status==="COMPLETED"||t.status==="DONE").length;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Work Schedule</title>
-<style>@page{size:A4 landscape;margin:10mm 8mm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:8pt;color:#1e293b}.hdr{text-align:center;margin-bottom:8px;padding-bottom:8px;border-bottom:3px solid #1e3a5f}.hdr h1{font-size:13pt;color:#1e3a5f;font-weight:800}.hdr-meta{display:flex;justify-content:center;gap:18px;margin-top:5px;font-size:8pt;color:#64748b}table{width:100%;border-collapse:collapse}thead tr{background:#1e3a5f;color:#fff}th{padding:6px 8px;text-align:center;font-size:8pt;font-weight:700;white-space:nowrap}td{padding:4px 8px;border-bottom:1px solid #e2e8f0;text-align:center;font-size:8pt;vertical-align:middle}tr.even td{background:#f8fafc}.footer{margin-top:8px;text-align:right;font-size:7pt;color:#94a3b8}</style>
-</head><body>
-<div class="hdr"><h1>ONE DEO LEELA FACADE SYSTEMS PVT LTD</h1>
-<div class="hdr-meta"><span><b>Project:</b> ${selectedProject?.projectName||""}</span><span><b>Date:</b> ${new Date().toLocaleDateString("en-IN")}</span><span><b>Records:</b> ${flat.length}</span><span><b>Completed:</b> ${done}/${flat.length}</span></div></div>
-<table><thead><tr>${thCells}</tr></thead><tbody>${rows}</tbody></table>
-<div class="footer">ONE DEO LEELA FACADE SYSTEMS · ${new Date().toLocaleString("en-IN")}</div>
-</body></html>`;
-    const w = window.open("","_blank");
-    w.document.write(html); w.document.close(); w.focus();
-    setTimeout(() => w.print(), 450);
+  }
+
+  // ── Style color maps keyed by field key ────────────────────────────────────
+  const ALL_ROW_LABEL_COLORS = {
+    whatChanged: { bg: "EFF6FF", text: "1E40AF" },
+    from:        { bg: "FEF2F2", text: "991B1B" },
+    to:          { bg: "F0FDF4", text: "065F46" },
+    reason:      { bg: "FFFBEB", text: "92400E" },
+    changedBy:   { bg: "F5F3FF", text: "5B21B6" },
+    changedAt:   { bg: "F8FAFC", text: "334155" },
+  };
+  const ALL_ROW_VALUE_BG = {
+    whatChanged: "F8FAFC",
+    from:        "FEF2F2",
+    to:          "F0FDF4",
+    reason:      "FFFBEB",
+    changedBy:   "FAFAFA",
+    changedAt:   "FFFFFF",
+  };
+
+  let r = 3;
+  filteredItems.forEach(([itemName, changes]) => {
+    const totalCols = 1 + changes.length;
+
+    // ── LINE ITEM header ───────────────────────────────────────────────────
+    for (let c = 0; c < totalCols; c++) {
+      const cell = XLSX.utils.encode_cell({ r, c });
+      if (!ws[cell]) ws[cell] = { v: c === 0 ? `LINE ITEM: ${itemName}` : "", t: "s" };
+      ws[cell].s = {
+        font:      { bold: true, sz: 11, color: { rgb: "FFFFFF" }, name: "Arial" },
+        fill:      { fgColor: { rgb: "0F172A" } },
+        alignment: { horizontal: "left", vertical: "center", wrapText: false },
+        border:    { bottom: { style: "medium", color: { rgb: "10B981" } } },
+      };
+    }
+    r++;
+
+    // ── REV header row ─────────────────────────────────────────────────────
+    const fieldLabelCell = XLSX.utils.encode_cell({ r, c: 0 });
+    if (ws[fieldLabelCell]) {
+      ws[fieldLabelCell].s = {
+        font:      { bold: true, sz: 9, color: { rgb: "FFFFFF" }, name: "Arial" },
+        fill:      { fgColor: { rgb: "334155" } },
+        alignment: { horizontal: "center", vertical: "center" },
+        border:    { right: { style: "medium", color: { rgb: "10B981" } } },
+      };
+    }
+
+    for (let c = 1; c < totalCols; c++) {
+      const cell = XLSX.utils.encode_cell({ r, c });
+      if (ws[cell]) {
+        const h           = changes[c - 1];
+        const isDate      = h?.field?.includes("Date");
+        const diff        = isDate ? daysBetween(h.oldValue, h.newValue) : 0;
+        const bgColor     = diff > 0 ? "FEE2E2" : diff < 0 ? "D1FAE5" : "E2E8F0";
+        const txtColor    = diff > 0 ? "991B1B" : diff < 0 ? "065F46" : "1E293B";
+        const borderColor = diff > 0 ? "EF4444" : diff < 0 ? "10B981" : "94A3B8";
+        ws[cell].s = {
+          font:      { bold: true, sz: 10, color: { rgb: txtColor }, name: "Arial" },
+          fill:      { fgColor: { rgb: bgColor } },
+          alignment: { horizontal: "center", vertical: "center", wrapText: false },
+          border: {
+            bottom: { style: "medium", color: { rgb: borderColor } },
+            right:  { style: "thin",   color: { rgb: "CBD5E1" } },
+          },
+        };
+      }
+    }
+    r++;
+
+    // ── Data rows — only active ones ───────────────────────────────────────
+    activeDataRowDefs.forEach(({ key }) => {
+      const { bg: labelBg, text: labelText } = ALL_ROW_LABEL_COLORS[key];
+      const valueBg = ALL_ROW_VALUE_BG[key];
+      const isFrom  = key === "from";
+      const isTo    = key === "to";
+
+      for (let c = 0; c < totalCols; c++) {
+        const cell = XLSX.utils.encode_cell({ r, c });
+        if (ws[cell]) {
+          if (c === 0) {
+            ws[cell].s = {
+              font:      { bold: true, sz: 9, color: { rgb: labelText }, name: "Arial" },
+              fill:      { fgColor: { rgb: labelBg } },
+              alignment: { horizontal: "left", vertical: "center", wrapText: false },
+              border: {
+                right:  { style: "medium", color: { rgb: "94A3B8" } },
+                bottom: { style: "thin",   color: { rgb: "E2E8F0" } },
+              },
+            };
+          } else {
+            const isDate = changes[c - 1]?.field?.includes("Date");
+            let txtColor = "334155";
+            if (isFrom && isDate) txtColor = "DC2626";
+            if (isTo   && isDate) txtColor = "059669";
+            ws[cell].s = {
+              font:      { sz: 10, color: { rgb: txtColor }, name: "Arial", bold: (isFrom || isTo) && isDate },
+              fill:      { fgColor: { rgb: valueBg } },
+              alignment: { horizontal: "left", vertical: "center", wrapText: true },
+              border: {
+                right:  { style: "thin", color: { rgb: "E2E8F0" } },
+                bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+              },
+            };
+          }
+        }
+      }
+      r++;
+    });
+
+    r++; // blank separator
+  });
+
+  // ── Column widths ──────────────────────────────────────────────────────────
+  const maxRevs = Math.max(...filteredItems.map(([, changes]) => changes.length), 0);
+  ws["!cols"] = [{ wch: 16 }, ...Array(maxRevs).fill({ wch: 22 })];
+
+  // ── Row heights ────────────────────────────────────────────────────────────
+  ws["!rows"] = rows.map((_, i) => ({ hpt: i === 0 ? 24 : 18 }));
+
+  // ── Freeze first column ────────────────────────────────────────────────────
+  ws["!freeze"] = { xSplit: 1, ySplit: 3 };
+
+  XLSX.utils.book_append_sheet(wb, ws, sheetLabel || "Change History");
+
+  const safe = s => (s || "unknown").replace(/[^a-zA-Z0-9_\-]/g, "_").replace(/_+/g, "_").trim();
+  const filename = `${safe(projectName)}_${safe(workName)}_revisions.xlsx`;
+  XLSX.writeFile(wb, filename);
+}
+
+
+
+// ── Inline PDF Schedule Download ──────────────────────────────────────────
+async function downloadSchedulePdf(workId, workName) {
+  if (!workId) { alert("No work selected"); return; }
+  try {
+    const res = await fetch(`${BASE}/api/planning/works/${workId}/report`);
+    if (!res.ok) throw new Error("Server error " + res.status);
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `Project_Schedule_${(workName || workId).replace(/[^a-zA-Z0-9_\-]/g,"_")}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) { alert("PDF download failed: " + e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOWNLOAD SELECTION MODAL
+// ═══════════════════════════════════════════════════════════════════════════════
+function DownloadModal({ history, projectName, workName, sheetLabel, onClose }) {
+  // Derive unique line items from history
+  const allItems = [...new Set(history.map(h => h.lineItemName || "Unknown"))];
+
+  const [selectedItems,  setSelectedItems]  = useState(new Set(allItems));
+  const [selectedFields, setSelectedFields] = useState(new Set(EXPORT_FIELDS.map(f => f.key)));
+  const [activeTab, setActiveTab] = useState("items"); // "items" | "fields"
+
+  const toggleItem  = id  => setSelectedItems(s  => { const n = new Set(s); n.has(id)  ? n.delete(id)  : n.add(id);  return n; });
+  const toggleField = key => setSelectedFields(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
+
+  const allItemsSelected  = selectedItems.size  === allItems.length;
+  const allFieldsSelected = selectedFields.size === EXPORT_FIELDS.length;
+
+  const handleExport = () => {
+    if (selectedItems.size === 0)  { alert("Select at least one line item.");  return; }
+    if (selectedFields.size === 0) { alert("Select at least one field/column."); return; }
+    exportToExcel({
+      history,
+      selectedItems:  [...selectedItems],
+      selectedFields: EXPORT_FIELDS.filter(f => selectedFields.has(f.key)).map(f => f.key),
+      projectName,
+      workName,
+      sheetLabel,
+    });
     onClose();
   };
 
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-head">
-          <div className="modal-head-left">
-            <FaFilePdf size={15} style={{ color: "#ef4444" }} />
-            <div><div className="modal-title">Export to PDF</div><div className="modal-sub">{selectedProject?.projectName}</div></div>
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{ ...S.modalBox, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ ...S.modalHead, background: "#0f172a", borderRadius: "14px 14px 0 0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <FaFileExcel size={16} color="#10b981" />
+            <span style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Export to Excel</span>
           </div>
-          <button className="icon-btn" onClick={onClose}><FaTimes size={12} /></button>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 4 }}>
+            <FaTimes size={15}/>
+          </button>
         </div>
-        <div className="modal-body">
-          <div className="modal-section">
-            <div className="section-hd"><FaCalendarAlt size={11} /> Date Filter</div>
-            <div className="radio-row">
-              {[{v:"all",l:"All Dates"},{v:"range",l:"Date Range"},{v:"month",l:"By Month"}].map(o => (
-                <label key={o.v} className={`radio-pill ${filterType===o.v?"active":""}`}>
-                  <input type="radio" value={o.v} checked={filterType===o.v} onChange={() => setFilterType(o.v)} />{o.l}
-                </label>
-              ))}
-            </div>
-            {filterType === "range" && (
-              <div className="date-range">
-                <div className="date-f"><label>From</label><input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/></div>
-                <span className="date-sep">→</span>
-                <div className="date-f"><label>To</label><input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}/></div>
-                {(dateFrom||dateTo) && <button className="clr-btn" onClick={()=>{setDateFrom("");setDateTo("");}}>✕ Clear</button>}
-              </div>
-            )}
-            {filterType === "month" && (
-              <div className="month-row"><label>Month:</label><input type="month" value={selMonth} onChange={e=>setSelMonth(e.target.value)}/></div>
-            )}
-            <div className="filter-badge"><FaFilter size={9} /> {filteredCount} records will be included</div>
-          </div>
-          <div className="modal-section">
-            <div className="section-hd"><FaColumns size={11} /> Columns
-              <button className="toggle-all" onClick={toggleAll}>{allOn?"Deselect All":"Select All"}</button>
-            </div>
-            <div className="col-chips">
-              {ALL_PDF_COLUMNS.map(c => (
-                <label key={c.key} className={`col-chip ${cols[c.key]?"on":""}`}>
-                  <input type="checkbox" checked={cols[c.key]} onChange={()=>toggleCol(c.key)}/>
-                  <span className="chip-dot"/>{c.label}
-                </label>
-              ))}
-            </div>
-            {activeCols.length===0 && <div className="warn-pill">⚠️ Select at least one column</div>}
-          </div>
-          <div className="modal-section">
-            <div className="section-hd">Layout</div>
-            <div className="layout-row">
-              <label className={`toggle-chip ${groupByWO?"on":""}`}>
-                <input type="checkbox" checked={groupByWO} onChange={e=>setGroupByWO(e.target.checked)}/> Group by Work Order
-              </label>
-              <div className="sort-pick">
-                <label>Sort:</label>
-                <select value={sortBy} onChange={e=>setSortBy(e.target.value)}>
-                  <option value="startDate">Start Date</option>
-                  <option value="department">Department</option>
-                  <option value="status">Status</option>
-                </select>
-              </div>
-            </div>
-          </div>
+
+        {/* Info bar */}
+        <div style={{ padding: "10px 22px", background: "#f0fdf4", borderBottom: "1px solid #d1fae5", fontSize: 12, color: "#065f46", display: "flex", alignItems: "center", gap: 8 }}>
+          <span>📊</span>
+          <span>
+            <strong>{projectName}</strong> → <strong>{workName}</strong>
+            &nbsp;·&nbsp; {history.length} total revision{history.length !== 1 ? "s" : ""} &nbsp;·&nbsp;
+            <strong style={{ color: "#10b981" }}>{selectedItems.size}</strong> items &nbsp;·&nbsp;
+            <strong style={{ color: "#10b981" }}>{selectedFields.size}</strong> columns selected
+          </span>
         </div>
-        <div className="modal-foot">
-          <div className="foot-chips">
-            <span className="foot-chip">{activeCols.length} cols</span>
-            <span className="foot-chip">{filteredCount} rows</span>
-            <span className="foot-chip">A4 Landscape</span>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn-pdf" disabled={activeCols.length===0||filteredCount===0} onClick={doExport}>
-              <FaFilePdf size={12} /> Export PDF
+
+        {/* Tabs */}
+        <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", padding: "0 22px" }}>
+          {[{ key: "items", label: `📋 Line Items (${allItems.length})` }, { key: "fields", label: `🗂️ Columns (${EXPORT_FIELDS.length})` }].map(tab => (
+            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+              style={{
+                padding: "12px 18px", background: "none", border: "none", cursor: "pointer",
+                fontSize: 13, fontWeight: 600,
+                color: activeTab === tab.key ? "#10b981" : "#64748b",
+                borderBottom: activeTab === tab.key ? "2px solid #10b981" : "2px solid transparent",
+                marginBottom: -1,
+              }}>
+              {tab.label}
             </button>
-          </div>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: "16px 22px", overflowY: "auto", maxHeight: 360 }}>
+          {activeTab === "items" && (
+            <div>
+              {/* Select All */}
+              <label style={DL.checkRow} onClick={() => setSelectedItems(allItemsSelected ? new Set() : new Set(allItems))}>
+                <div style={{ ...DL.checkbox, background: allItemsSelected ? "#10b981" : "#fff", borderColor: allItemsSelected ? "#10b981" : "#cbd5e1" }}>
+                  {allItemsSelected && <FaCheck size={8} color="#fff"/>}
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b" }}>Select All Line Items</span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "#94a3b8" }}>{selectedItems.size} / {allItems.length}</span>
+              </label>
+
+              <div style={{ height: 1, background: "#e2e8f0", margin: "10px 0" }} />
+
+              {allItems.map(name => {
+                const count   = history.filter(h => (h.lineItemName || "Unknown") === name).length;
+                const checked = selectedItems.has(name);
+                return (
+                  <label key={name} style={DL.checkRow} onClick={() => toggleItem(name)}>
+                    <div style={{ ...DL.checkbox, background: checked ? "#10b981" : "#fff", borderColor: checked ? "#10b981" : "#cbd5e1" }}>
+                      {checked && <FaCheck size={8} color="#fff"/>}
+                    </div>
+                    <span style={{ fontSize: 13, color: "#334155", flex: 1 }}>{name}</span>
+                    <span style={{ fontSize: 11, background: "#f1f5f9", color: "#64748b", padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>
+                      {count} rev{count !== 1 ? "s" : ""}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          {activeTab === "fields" && (
+            <div>
+              {/* Select All */}
+              <label style={DL.checkRow} onClick={() => setSelectedFields(allFieldsSelected ? new Set() : new Set(EXPORT_FIELDS.map(f => f.key)))}>
+                <div style={{ ...DL.checkbox, background: allFieldsSelected ? "#10b981" : "#fff", borderColor: allFieldsSelected ? "#10b981" : "#cbd5e1" }}>
+                  {allFieldsSelected && <FaCheck size={8} color="#fff"/>}
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b" }}>Select All Columns</span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "#94a3b8" }}>{selectedFields.size} / {EXPORT_FIELDS.length}</span>
+              </label>
+
+              <div style={{ height: 1, background: "#e2e8f0", margin: "10px 0" }} />
+
+              {EXPORT_FIELDS.map(f => {
+                const checked = selectedFields.has(f.key);
+                return (
+                  <label key={f.key} style={DL.checkRow} onClick={() => toggleField(f.key)}>
+                    <div style={{ ...DL.checkbox, background: checked ? "#10b981" : "#fff", borderColor: checked ? "#10b981" : "#cbd5e1" }}>
+                      {checked && <FaCheck size={8} color="#fff"/>}
+                    </div>
+                    <span style={{ fontSize: 13, color: "#334155" }}>{f.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "14px 22px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end", gap: 10, background: "#f8fafc", borderRadius: "0 0 14px 14px" }}>
+          <button onClick={onClose} style={S.cancelBtn}>Cancel</button>
+          <button onClick={handleExport}
+            style={{ ...S.saveBtn, background: "#10b981", gap: 8 }}
+            disabled={selectedItems.size === 0 || selectedFields.size === 0}>
+            <FaFileExcel size={12}/> Export Excel ({selectedItems.size} items, {selectedFields.size} cols)
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-// ══════════════════════════════════════════════════════
-// MAIN DASHBOARD
-// ══════════════════════════════════════════════════════
-export default function PlanningDashboard() {
-  const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem("user") || "{}");
+const DL = {
+  checkRow: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "9px 10px", borderRadius: 8, cursor: "pointer",
+    userSelect: "none", transition: "background .1s",
+    "&:hover": { background: "#f8fafc" },
+  },
+  checkbox: {
+    width: 18, height: 18, borderRadius: 5,
+    border: "2px solid #cbd5e1", display: "flex",
+    alignItems: "center", justifyContent: "center",
+    flexShrink: 0, transition: "all .15s",
+  },
+};
 
-  const [projects, setProjects] = useState([]);
-  const [selectedProject, setSelectedProject] = useState(null);
-  const [tasks, setTasks] = useState([]);
-  const [expanded, setExpanded] = useState(new Set());
-  const [allExpanded, setAllExpanded] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
-  const [showProjectForm, setShowProjectForm] = useState(false);
-  const [showWOForm, setShowWOForm] = useState(false);
-  const [woForm, setWoForm] = useState({ name: "", woNumber: "", projectCode: "", startDate: "", endDate: "" });
-  const [addingTo, setAddingTo] = useState(null);
-  const [newTaskName, setNewTaskName] = useState("");
-  const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({});
-  const [fetching, setFetching] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState({ msg: "", type: "ok" });
-  const [search, setSearch] = useState("");
-  const [linkMode, setLinkMode] = useState(false);
-  const [linkSource, setLinkSource] = useState(null);
-  const [deps, setDeps] = useState({});
-  const [linkLag, setLinkLag] = useState(0);
-  const [showPDFModal, setShowPDFModal] = useState(false);
-  const [historyTask, setHistoryTask] = useState(null);
-  const [dateReasonModal, setDateReasonModal] = useState(null);
-  const [showPrevCols, setShowPrevCols] = useState(true);
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOTIFICATION HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildNotifications(lineItems, selProject, selWork) {
+  const today = new Date().toISOString().split("T")[0];
+  const notifs = [];
 
+  lineItems.forEach(item => {
+    const label = `${selProject?.projectName || "?"} → ${selWork?.workName || "?"} → ${item.lineItemName}`;
+
+    if (item.startDate === today && item.status === "IN PROGRESS") {
+      notifs.push({ id: `start-${item.id}`, type: "started", label, item, time: item.startDate, msg: "Process started today" });
+    }
+
+    if (item.status === "DONE" && item.endDate && item.endDate > today) {
+      const early = daysBetween(today, item.endDate);
+      notifs.push({ id: `early-${item.id}`, type: "early", label, item, time: item.endDate, msg: `Completed ${early} day(s) early 🎉` });
+    }
+
+    if (item.endDate && item.endDate < today && item.status !== "DONE" && item.status !== "CANCELLED") {
+      const delayed = daysBetween(item.endDate, today);
+      notifs.push({ id: `delay-${item.id}`, type: "delayed", label, item, time: item.endDate, msg: `Delayed by ${delayed} day(s) ⚠️` });
+    }
+
+    const daysToStart = daysBetween(today, item.startDate);
+    if (daysToStart > 0 && daysToStart <= 3 && item.status === "NOT STARTED") {
+      notifs.push({ id: `upcoming-${item.id}`, type: "upcoming", label, item, time: item.startDate, msg: `Starts in ${daysToStart} day(s)` });
+    }
+  });
+
+  return notifs;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
+export default function PlanningDashboard({ onBack }) {
+  const [activeNav, setActiveNav] = useState("home");
+  const [collapsed, setCollapsed] = useState(false);
+
+  const [projects, setProjects]   = useState([]);
+  const [works, setWorks]         = useState([]);
+  const [lineItems, setLineItems] = useState([]);
+  const [history, setHistory]     = useState([]);
+  const [historyTitle, setHistoryTitle] = useState("Change History");
+
+  const [expandedItem, setExpandedItem]   = useState(null);
+  const [itemRevisions, setItemRevisions] = useState({});
+
+  const [selProject, setSelProject] = useState(null);
+  const [selWork, setSelWork]       = useState(null);
+
+  const [showWorkForm, setShowWorkForm]         = useState(false);
+  const [showLineItemForm, setShowLineItemForm] = useState(false);
+  const [editingItem, setEditingItem]           = useState(null);
+
+  const [dayModal, setDayModal]   = useState(null);
+  const [dayInput, setDayInput]   = useState("");
+  const [dayReason, setDayReason] = useState("");
+
+  const [editReasonModal, setEditReasonModal] = useState(null);
+  const [editReason, setEditReason]           = useState("");
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [toast, setToast]           = useState(null);
+  const toastTimer                  = useRef(null);
+
+  // Set of projectIds that are "new" (created in this browser and not yet
+  // planned). Backed by a cookie so it survives refresh AND logout, but
+  // needs no extra per-project API calls — avoids the earlier bug where a
+  // failed /works fetch silently made every project look "new" again.
+  const [newProjectIds, setNewProjectIds] = useState(new Set());
+
+  // Projects "hidden" from this Planning Dashboard. Nothing is deleted —
+  // this only affects what shows up here; the project still fully exists
+  // and is untouched everywhere else in the app.
+  const [hiddenProjectIds, setHiddenProjectIds] = useState(new Set());
+  const [showHidden, setShowHidden] = useState(false);
+
+  const [notifications, setNotifications] = useState([]);
+  const [dismissedNotifs, setDismissedNotifs] = useState(new Set());
+  const [recentProjects, setRecentProjects] = useState([]);
+
+  // ── Download modal state ───────────────────────────────────────────────────
+  const [downloadModal, setDownloadModal] = useState(null);
+  const [showProjectManager, setShowProjectManager] = useState(false);
+    const [saveTemplateModal, setSaveTemplateModal] = useState(null);
+
+  // downloadModal = { history, projectName, workName, sheetLabel } | null
+
+  // ── Effects ────────────────────────────────────────────────────────────────
   useEffect(() => { loadProjects(); }, []);
-  useEffect(() => { if (selectedProject?.id) loadTasks(selectedProject.id); }, [selectedProject]);
+  useEffect(() => {
+    if (selProject) loadWorks(selProject.projectId);
+    else setWorks([]);
+  }, [selProject]);
+  useEffect(() => {
+    if (selWork) loadLineItems(selWork.id);
+    else setLineItems([]);
+  }, [selWork]);
 
-  const showToast = (msg, type = "ok") => {
+  useEffect(() => {
+    if (lineItems.length > 0 && selProject && selWork) {
+      setNotifications(buildNotifications(lineItems, selProject, selWork));
+    }
+  }, [lineItems, selProject, selWork]);
+
+  const showToast = (msg, type = "success") => {
+    clearTimeout(toastTimer.current);
     setToast({ msg, type });
-    setTimeout(() => setToast({ msg: "", type: "ok" }), 3200);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
+
+  // ── API ────────────────────────────────────────────────────────────────────
+  // _v2 suffix: resets any old/incorrect data saved by the previous buggy
+  // version (which had mistakenly marked every existing project as "new").
+  const NEW_PROJECTS_KEY    = "planningDashboard_newProjectIds_v2";
+  const KNOWN_PROJECTS_KEY  = "planningDashboard_knownProjectIds_v2";
+  const HIDDEN_PROJECTS_KEY = "planningDashboard_hiddenProjectIds";
+
+  // Cookies instead of localStorage — in production, something in the
+  // logout flow (outside this file) appears to call localStorage.clear(),
+  // which wipes this data on every logout. Cookies aren't touched by that,
+  // so this survives logout → login on the same browser.
+  const getCookie = (name) => {
+    try {
+      const match = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+      return match ? decodeURIComponent(match[1]) : null;
+    } catch { return null; }
+  };
+  const setCookie = (name, value, days = 1825) => { // ~5 years
+    try {
+      const expires = new Date(Date.now() + days * 86400000).toUTCString();
+      document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+    } catch { /* ignore */ }
+  };
+
+  const readIdSet = (key) => {
+    try {
+      const raw = getCookie(key);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  };
+  const writeIdSet = (key, set) => {
+    try { setCookie(key, JSON.stringify([...set])); } catch { /* ignore */ }
+  };
+
+  // Marks a project as "planned" (no longer new) — called once a Work is
+  // created for it. Its badge then switches from 🆕 NEW to 📅 PLANNED.
+  const markProjectAsPlanned = (projectId) => {
+    const newIds = readIdSet(NEW_PROJECTS_KEY);
+    if (!newIds.has(projectId)) return;
+    newIds.delete(projectId);
+    writeIdSet(NEW_PROJECTS_KEY, newIds);
+    setNewProjectIds(new Set(newIds));
+  };
+
+  // Hides/unhides a project from this Planning Dashboard only. Nothing is
+  // deleted — the project keeps existing everywhere else in the app, and
+  // can be unhidden again any time from the "Hidden Projects" section.
+  const toggleHideProject = (projectId, hide) => {
+    const hidden = readIdSet(HIDDEN_PROJECTS_KEY);
+    if (hide) hidden.add(projectId); else hidden.delete(projectId);
+    writeIdSet(HIDDEN_PROJECTS_KEY, hidden);
+    setHiddenProjectIds(new Set(hidden));
   };
 
   const loadProjects = async () => {
     try {
-      const r = await axios.get(API_PROJECT);
-      setProjects((r.data || []).map(p => ({ ...p, id: p.id ?? p.projectId })));
-    } catch (e) { console.error(e); }
-  };
+      const { data } = await axios.get(PROJ_API);
+      const list = Array.isArray(data) ? data : [];
+      setProjects(list);
+      setHiddenProjectIds(readIdSet(HIDDEN_PROJECTS_KEY));
 
-  const loadTasks = async id => {
-    setFetching(true);
-    try {
-      const r = await axios.get(`${API_TASK}/project/${id}`);
-      setTasks(r.data || []);
-    } catch (e) { console.error(e); }
-    finally { setFetching(false); }
-  };
+      // On the very first load (KNOWN key not present yet in this browser),
+      // every currently-existing project becomes the baseline and is treated
+      // as already PLANNED — none of them get the NEW badge. From here on,
+      // any project whose ID was never part of that baseline (i.e. genuinely
+      // created after this point) is the one that gets marked NEW.
+      const isFirstRun = getCookie(KNOWN_PROJECTS_KEY) === null;
 
-  const createProject = async () => {
-    if (!newProjectName.trim()) return;
-    setLoading(true);
-    try {
-      await axios.post(API_PROJECT, { projectName: newProjectName.trim() });
-      setNewProjectName(""); setShowProjectForm(false);
-      await loadProjects(); showToast("Project created!");
-    } catch { showToast("Failed to create project", "err"); }
-    finally { setLoading(false); }
-  };
-
-  const createWorkOrder = async () => {
-    if (!woForm.name.trim() || !selectedProject?.id) { showToast("Select a project first", "err"); return; }
-    setLoading(true);
-    try {
-      await axios.post(`${API_TASK}/root`, {
-        name: woForm.name.trim(), projectId: String(selectedProject.id),
-        woNumber: woForm.woNumber.trim(), projectCode: woForm.projectCode.trim(),
-        startDate: woForm.startDate || null, endDate: woForm.endDate || null,
+      const known = readIdSet(KNOWN_PROJECTS_KEY);
+      const newIds = readIdSet(NEW_PROJECTS_KEY);
+      let changed = false;
+      list.forEach(p => {
+        if (!known.has(p.projectId)) {
+          known.add(p.projectId);
+          changed = true;
+          if (!isFirstRun) newIds.add(p.projectId);
+        }
       });
-      setWoForm({ name: "", woNumber: "", projectCode: "", startDate: "", endDate: "" });
-      setShowWOForm(false);
-      await loadTasks(selectedProject.id);
-      showToast("Work Order created!");
-    } catch (e) { showToast(e?.response?.data?.message || "Failed", "err"); }
-    finally { setLoading(false); }
+      if (changed) {
+        writeIdSet(KNOWN_PROJECTS_KEY, known);
+        writeIdSet(NEW_PROJECTS_KEY, newIds);
+      }
+      setNewProjectIds(new Set(newIds));
+    } catch { showToast("Failed to load projects", "error"); }
   };
 
-  const addChild = async parentId => {
-    if (!newTaskName.trim()) return;
-    setLoading(true);
+  const loadWorks = async (projectId) => {
     try {
-      await axios.post(`${API_TASK}/${parentId}/child`, { name: newTaskName.trim() });
-      setNewTaskName(""); setAddingTo(null);
-      await loadTasks(selectedProject.id);
-      showToast("Line item added!");
-    } catch { showToast("Failed", "err"); }
-    finally { setLoading(false); }
+      const { data } = await axios.get(`${PLAN_API}/projects/${projectId}/works`);
+      setWorks(data || []);
+    } catch { showToast("Failed to load works", "error"); }
   };
 
-  const handleSaveEdit = () => {
-    const task = tasks.find(t => t.id === editingId);
-    if (!task) return;
-    const prevSd = fmtDate(task.startDate), prevEd = fmtDate(task.endDate);
-    const newSd = editForm.startDate || "", newEd = editForm.endDate || "";
-    const datesChanged = (newSd && newSd !== prevSd) || (newEd && newEd !== prevEd);
-    if (datesChanged) {
-      setDateReasonModal({ task, newStart: newSd, newEnd: newEd });
+  const saveWork = async (form) => {
+    try {
+      const payload = { ...form, projectId: selProject.projectId };
+      if (form.id) await axios.put(`${PLAN_API}/works/${form.id}`, payload);
+      else         await axios.post(`${PLAN_API}/works`, payload);
+      showToast("Work saved ✓");
+      setShowWorkForm(false); setEditingItem(null);
+      loadWorks(selProject.projectId);
+      markProjectAsPlanned(selProject.projectId);
+    } catch { showToast("Failed to save work", "error"); }
+  };
+
+const deleteWork = async (id) => {
+  if (!window.confirm(
+    "Delete this work and all its line items?\n\n" +
+    "✅ Any template saved from this work will NOT be deleted — " +
+    "it stays in your template library."
+  )) return;
+  try {
+    await axios.delete(`${PLAN_API}/works/${id}`);
+    showToast("Work deleted — templates are unaffected ✓");
+    loadWorks(selProject.projectId);
+  } catch { showToast("Delete failed", "error"); }
+};
+
+//  const deleteWork = async (id) => {
+//    if (!window.confirm("Delete this work and all its line items?")) return;
+//    try {
+//      await axios.delete(`${PLAN_API}/works/${id}`);
+//      showToast("Work deleted");
+//      loadWorks(selProject.projectId);
+//    } catch { showToast("Delete failed", "error"); }
+//  };
+
+  const loadLineItems = async (workId) => {
+    try {
+      const { data } = await axios.get(`${PLAN_API}/works/${workId}/line-items`);
+      setLineItems(data || []);
+    } catch { showToast("Failed to load line items", "error"); }
+  };
+
+  const loadItemRevisions = async (item) => {
+    if (expandedItem === item.id) { setExpandedItem(null); return; }
+    setExpandedItem(item.id);
+    if (itemRevisions[item.id]) return;
+    try {
+      const { data } = await axios.get(`${PLAN_API}/line-items/${item.id}/history`);
+      const forItem = (data || []).reverse();
+      setItemRevisions(prev => ({ ...prev, [item.id]: forItem }));
+    } catch { showToast("Failed to load revisions", "error"); }
+  };
+
+  const handleLineItemSave = (form) => {
+    if (form.id) {
+      setShowLineItemForm(false);
+      setEditReasonModal({ item: editingItem, newForm: form });
+      setEditReason("");
     } else {
-      doSaveEdit(null);
+      doSaveLineItem(form, null);
     }
   };
 
-  const doSaveEdit = async (changeReason) => {
-    setDateReasonModal(null);
-    setLoading(true);
-    const task = tasks.find(t => t.id === editingId);
-    const prevSd = fmtDate(task?.startDate), prevEd = fmtDate(task?.endDate);
-    const newSd = editForm.startDate || null, newEd = editForm.endDate || null;
-    const datesChanged = (newSd && newSd !== prevSd) || (newEd && newEd !== prevEd);
+  const doSaveLineItem = async (form, reason) => {
+    try {
+      const payload = {
+        ...form,
+        workId: selWork.id,
+        linkedItemIds: Array.isArray(form.linkedItemIds)
+          ? form.linkedItemIds.map(l => (typeof l === "object" ? `${l.targetId}:${l.trigger}:${l.offsetDays || 0}` : l)).join(",")
+          : form.linkedItemIds,
+      };
 
-    // Save history to localStorage BEFORE updating
-    if (datesChanged) {
-      saveHistory(editingId, {
-        prevStartDate: prevSd,
-        prevEndDate: prevEd,
-        newStartDate: newSd,
-        newEndDate: newEd,
-        reason: changeReason || "",
-        changedAt: new Date().toISOString(),
-        changedBy: user.fullName || "User",
+      if (form.id) {
+        await axios.put(`${PLAN_API}/line-items/${form.id}`, payload);
+        if (reason && editReasonModal?.item) {
+          const old = editReasonModal.item;
+          const trackedFields = ["startDate", "endDate", "status", "remark"];
+          const changed = [];
+          for (const field of trackedFields) {
+            const oldVal = old[field]  != null ? String(old[field])  : "";
+            const newVal = form[field] != null ? String(form[field]) : "";
+            if (oldVal !== newVal) changed.push({ field, oldVal, newVal });
+          }
+          for (const ch of changed) {
+            await axios.post(`${PLAN_API}/history`, {
+              workId: selWork.id, lineItemId: form.id,
+              lineItemName: form.lineItemName || old.lineItemName,
+              field: ch.field, oldValue: ch.oldVal, newValue: ch.newVal,
+              reason, changedBy: "User",
+            });
+          }
+          if (changed.length === 0 && reason) {
+            await axios.post(`${PLAN_API}/history`, {
+              workId: selWork.id, lineItemId: form.id,
+              lineItemName: form.lineItemName || old.lineItemName,
+              field: "general", oldValue: "", newValue: "",
+              reason, changedBy: "User",
+            });
+          }
+        }
+      } else {
+        await axios.post(`${PLAN_API}/line-items`, payload);
+      }
+      showToast("Line item saved ✓");
+      setShowLineItemForm(false); setEditingItem(null);
+      setEditReasonModal(null); setEditReason("");
+      setItemRevisions({});
+      setExpandedItem(null);
+      loadLineItems(selWork.id);
+    } catch { showToast("Failed to save line item", "error"); }
+  };
+
+  const deleteLineItem = async (id) => {
+    if (!window.confirm("Delete this line item?")) return;
+    try {
+      await axios.delete(`${PLAN_API}/line-items/${id}`);
+      showToast("Deleted");
+      setItemRevisions(prev => { const n = { ...prev }; delete n[id]; return n; });
+      if (expandedItem === id) setExpandedItem(null);
+      loadLineItems(selWork.id);
+    } catch { showToast("Delete failed", "error"); }
+  };
+
+
+
+const openDayModal = (item, field) => {
+  setDayModal({ item, field });
+  setDayInput("");
+  setDayReason("");
+};
+
+
+
+const confirmDayChange = async () => {
+  const days = parseInt(dayInput, 10);
+  if (isNaN(days) || days === 0) {
+    showToast("Enter a valid number of days (non-zero)", "error");
+    return;
+  }
+  if (!dayReason.trim()) {
+    showToast("Please enter a reason", "error");
+    return;
+  }
+
+  const { item, field } = dayModal;
+  const isStartDate = field === "startDate";
+
+  if (!item[field]) {
+    showToast("Date is missing — edit the item first", "error");
+    return;
+  }
+
+  try {
+    if (isStartDate) {
+      // ── START DATE changed ────────────────────────────────────────────────
+      const oldStart = item.startDate;
+      const oldEnd   = item.endDate;
+      const newStart = addDaysToDate(oldStart, days);
+      const newEnd   = oldEnd ? addDaysToDate(oldEnd, days) : null;
+
+      // Shift startDate — this cascades to linked items
+      const res = await axios.put(`${PLAN_API}/line-items/${item.id}/change-date`, {
+        field:     "startDate",
+        oldValue:  oldStart,
+        newValue:  newStart,
+        reason:    dayReason,
+        cascade:   Math.abs(days) >= 2,
+        changedBy: "User",
       });
+
+      // Shift endDate by same amount — no cascade (already done via startDate)
+      if (oldEnd && newEnd) {
+        await axios.put(`${PLAN_API}/line-items/${item.id}/change-date`, {
+          field:     "endDate",
+          oldValue:  oldEnd,
+          newValue:  newEnd,
+          reason:    `Auto-adjusted with Start Date — ${dayReason}`,
+          cascade:   false,
+          changedBy: "System (auto)",
+        });
+      }
+
+      const cascaded = res.data?.cascadedItems || [];
+      let msg = `Start & End shifted ${days > 0 ? "+" : ""}${days} days ✓`;
+      if (cascaded.length > 0) msg += ` · Also shifted: ${cascaded.join(", ")}`;
+      showToast(msg);
+
+    } else {
+      // ── END DATE changed ──────────────────────────────────────────────────
+      // startDate stays completely fixed
+      const oldEnd = item.endDate;
+      const newEnd = addDaysToDate(oldEnd, days);
+
+      const res = await axios.put(`${PLAN_API}/line-items/${item.id}/change-date`, {
+        field:     "endDate",
+        oldValue:  oldEnd,
+        newValue:  newEnd,
+        reason:    dayReason,
+        cascade:   Math.abs(days) >= 2,
+        changedBy: "User",
+      });
+
+      const cascaded = res.data?.cascadedItems || [];
+      let msg = `End Date shifted ${days > 0 ? "+" : ""}${days} days ✓`;
+      if (cascaded.length > 0) msg += ` · Also shifted: ${cascaded.join(", ")}`;
+      showToast(msg);
     }
 
+    setDayModal(null);
+    setDayInput("");
+    setDayReason("");
+    setItemRevisions({});
+    setExpandedItem(null);
+    loadLineItems(selWork.id);
+
+  } catch {
+    showToast("Failed to update date", "error");
+  }
+};
+  const loadHistory = async (type, id, title) => {
     try {
-      await axios.put(`${API_TASK}/${editingId}/dates`, {
-        startDate: newSd, endDate: newEd,
-        prevStartDate: datesChanged ? prevSd : undefined,
-        prevEndDate: datesChanged ? prevEd : undefined,
-        dateChangeReason: changeReason || undefined,
-      });
-      await axios.put(`${API_TASK}/${editingId}`, {
-        name: editForm.name || "",
-        department: editForm.department || "",
-        actionPerson: editForm.actionPerson || "",
-        quantitySqft: editForm.quantitySqft ? Number(editForm.quantitySqft) : null,
-        progressPercent: editForm.progressPercent ? Number(editForm.progressPercent) : 0,
-        status: editForm.status || "NOT_STARTED",
-        remark: editForm.remark || "",
-        taskType: editForm.taskType || "",
-        dateChangeReason: changeReason || editForm.dateChangeReason || "",
-        prevStartDate: datesChanged ? prevSd : (task?.prevStartDate || ""),
-        prevEndDate: datesChanged ? prevEd : (task?.prevEndDate || ""),
-      });
-      const savedId = editingId;
-      setEditingId(null);
-      await loadTasks(selectedProject.id);
-      cascadeAll(savedId);
-      showToast("Saved!" + (datesChanged && changeReason ? " Reason recorded." : ""));
-    } catch { showToast("Update failed", "err"); }
-    finally { setLoading(false); }
+      const url = type === "project"
+        ? `${PLAN_API}/projects/${id}/history`
+        : `${PLAN_API}/works/${id}/history`;
+      const { data } = await axios.get(url);
+      setHistory(data || []);
+      setHistoryTitle(title || "Change History");
+      setActiveNav("history");
+    } catch { showToast("Failed to load history", "error"); }
   };
 
-  const addDependency = (sourceTask, targetTaskId, lag = 0) => {
-    setDeps(prev => ({ ...prev, [targetTaskId]: { parentId: sourceTask.id, lag } }));
-    cascadeFrom(sourceTask.id, lag, targetTaskId);
-    setLinkMode(false); setLinkSource(null);
-    showToast(`Linked: +${lag} days dependency set`);
+  const loadRevisions = async () => {
+    if (!selWork) return;
+    try {
+      const { data } = await axios.get(`${PLAN_API}/works/${selWork.id}/history`);
+      setHistory(data || []);
+      setActiveNav("revisions");
+    } catch { showToast("Failed to load revisions", "error"); }
   };
 
-  const removeDependency = taskId => {
-    setDeps(prev => { const n = { ...prev }; delete n[taskId]; return n; });
-    showToast("Dependency removed");
-  };
+const goToWorks = (project) => {
+  setSelProject(project);
+  setSelWork(null);
+  setActiveNav("works");
+  setRecentProjects(prev => {
+    const filtered = prev.filter(p => p.projectId !== project.projectId);
+    return [project, ...filtered].slice(0, 3);
+  });
+};  const goToLineItems = (work)    => { setSelWork(work); setActiveNav("lineItems"); };
 
-  const cascadeFrom = (predId, lag, targetId) => {
-    setTasks(prev => {
-      const pred = prev.find(t => t.id === predId);
-      const target = prev.find(t => t.id === targetId);
-      if (!pred?.endDate || !target) return prev;
-      const newStart = new Date(fmtDate(pred.endDate));
-      newStart.setDate(newStart.getDate() + lag);
-      const dur = calcDays(fmtDate(target.startDate), fmtDate(target.endDate));
-      const newEnd = new Date(newStart);
-      if (dur !== "-") newEnd.setDate(newEnd.getDate() + Number(dur));
-      const ns = newStart.toISOString().substring(0, 10);
-      const ne = newEnd.toISOString().substring(0, 10);
-      axios.put(`${API_TASK}/${targetId}/dates`, { startDate: ns, endDate: ne }).catch(console.error);
-      return prev.map(t => t.id === targetId ? { ...t, startDate: ns, endDate: ne } : t);
+  // No project is ever hidden — every project always stays visible/accessible.
+  // We just sort "new" (not yet planned) projects to the top and badge them,
+  // so a project you've already started Work on is still reachable to keep
+  // adding Works / Line Items to it.
+  const visibleProjects = projects.filter(p => !hiddenProjectIds.has(p.projectId));
+  const hiddenProjectsList = projects.filter(p => hiddenProjectIds.has(p.projectId));
+
+  const sortedProjects = [...visibleProjects].sort((a, b) => {
+    const aNew = newProjectIds.has(a.projectId) ? 0 : 1;
+    const bNew = newProjectIds.has(b.projectId) ? 0 : 1;
+    return aNew - bNew;
+  });
+
+  const filteredProjects = sortedProjects.filter(p =>
+    !searchTerm ||
+    p.projectName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.projectCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.clientName?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const doneCount       = lineItems.filter(i => i.status === "DONE").length;
+  const inProgressCount = lineItems.filter(i => i.status === "IN PROGRESS").length;
+  const overdueCount    = lineItems.filter(i => {
+    const today = new Date().toISOString().split("T")[0];
+    return i.endDate && i.endDate < today && i.status !== "DONE" && i.status !== "CANCELLED";
+  }).length;
+
+  const activeNotifs = notifications.filter(n => !dismissedNotifs.has(n.id));
+
+  // ── Open download modal helpers ────────────────────────────────────────────
+  const openDownloadModal = (hist, label) => {
+    setDownloadModal({
+      history:     hist,
+      projectName: selProject?.projectName,
+      workName:    selWork?.workName,
+      sheetLabel:  label,
     });
   };
 
-  const cascadeAll = savedId => {
-    Object.entries(deps).forEach(([childId, dep]) => {
-      if (String(dep.parentId) === String(savedId)) cascadeFrom(savedId, dep.lag, Number(childId));
-    });
-  };
+  // ═══════════════════════════════════════════════════════════════════════════
+  return (
+    <div style={S.shell}>
 
-  const deleteTask = async id => {
-    if (!window.confirm("Delete this task and all its sub-tasks?")) return;
-    try {
-      await axios.delete(`${API_TASK}/${id}`);
-      setDeps(prev => { const n = { ...prev }; delete n[id]; return n; });
-      await loadTasks(selectedProject.id);
-      showToast("Deleted.");
-    } catch (e) { showToast(e?.response?.data?.message || "Delete failed", "err"); }
-  };
+      {/* ── SIDEBAR ── */}
+      <aside style={{ ...S.sidebar, width: collapsed ? 60 : 224 }}>
+        <div style={S.sideTop}>
+          {!collapsed && (
+            <div style={S.brandBlock}>
+              <span style={S.brandIcon}>📅</span>
+              <span style={S.brandText}>Planning ERP</span>
+            </div>
+          )}
+          <button style={S.collapseBtn} onClick={() => setCollapsed(v => !v)}>
+            {collapsed ? "▶" : "◀"}
+          </button>
+        </div>
 
-  const buildTree = list => {
-    const map = {}, roots = [];
-    list.forEach(t => (map[t.id] = { ...t, children: [] }));
-    list.forEach(t => { t.parentId && map[t.parentId] ? map[t.parentId].children.push(map[t.id]) : roots.push(map[t.id]); });
-    return roots;
-  };
+        <nav style={{ flex: 1, padding: "6px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
+          {NAV.map(({ key, icon: Icon, label, color }) => {
+            const active = activeNav === key;
+            const badge = key === "notifications" ? activeNotifs.length
+                        : key === "history"       ? history.length
+                        : 0;
+            return (
+              <button key={key} onClick={() => setActiveNav(key)}
+                style={{
+                  ...S.navItem,
+                  background: active ? color + "22" : "transparent",
+                  color:      active ? color : "#8892a4",
+                  borderLeft: active ? `3px solid ${color}` : "3px solid transparent",
+                }}>
+                <Icon size={14} style={{ flexShrink: 0 }} />
+                {!collapsed && <span style={S.navLabel}>{label}</span>}
+                {!collapsed && badge > 0 && (
+                  <span style={{ marginLeft: "auto", background: key === "notifications" ? "#f97316" : "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
 
-  const filterTree = (nodes, term) => {
-    if (!term) return nodes;
-    return nodes.reduce((acc, n) => {
-      const hit = n.name?.toLowerCase().includes(term.toLowerCase()) || n.department?.toLowerCase().includes(term.toLowerCase()) || n.actionPerson?.toLowerCase().includes(term.toLowerCase());
-      const fc = filterTree(n.children || [], term);
-      if (hit || fc.length) acc.push({ ...n, children: fc });
-      return acc;
-    }, []);
-  };
-
-  const toggle = id => { const s = new Set(expanded); s.has(id) ? s.delete(id) : s.add(id); setExpanded(s); };
-  const expandAll = () => { setExpanded(new Set(tasks.map(t => t.id))); setAllExpanded(true); };
-  const collapseAll = () => { setExpanded(new Set()); setAllExpanded(false); };
-
-  const tree = filterTree(buildTree(tasks), search);
-  const lineItems = tasks.filter(t => t.parentId);
-  const workOrders = tasks.filter(t => !t.parentId).length;
-  const completed = lineItems.filter(t => t.status === "COMPLETED" || t.status === "DONE").length;
-  const inProgress = lineItems.filter(t => t.status === "IN_PROGRESS").length;
-  const delayed = lineItems.filter(t => t.status === "DELAYED").length;
-  const onHold = lineItems.filter(t => t.status === "ON_HOLD").length;
-  const dateChanged = lineItems.filter(t => t.prevStartDate || t.prevEndDate).length;
-  const avgProgress = lineItems.length ? Math.round(lineItems.reduce((s, t) => s + (t.progressPercent || 0), 0) / lineItems.length) : 0;
-  const taskMap = tasks.reduce((m, t) => { m[t.id] = t; return m; }, {});
-
-  const renderRows = (nodes, level = 0) =>
-    nodes.map(t => {
-      const isWO = !t.parentId;
-      const isEditing = editingId === t.id;
-      const hasCh = t.children?.length > 0;
-      const isOpen = expanded.has(t.id);
-      const sm = STATUS_META[t.status] || STATUS_META.NOT_STARTED;
-      const tm = TYPE_META[t.taskType];
-      const sd = fmtDate(t.startDate), ed = fmtDate(t.endDate);
-      const psd = fmtDate(t.prevStartDate), ped = fmtDate(t.prevEndDate);
-      const hasDiff = (psd && psd !== sd) || (ped && ped !== ed);
-      const depInfo = deps[t.id];
-      const depTask = depInfo ? taskMap[depInfo.parentId] : null;
-      // Also check localStorage history
-      const histCount = getTaskHistory(t.id).length;
-
-      return (
-        <React.Fragment key={t.id}>
-          {isWO && (
-            <tr className="wo-row">
-              <td colSpan={showPrevCols ? 17 : 14}>
-                <div className="wo-bar">
-                  <button className="exp-btn" onClick={() => toggle(t.id)}>
-                    {isOpen ? <FaChevronDown size={10}/> : <FaChevronRight size={10}/>}
-                  </button>
-                  <FaBriefcase size={12} style={{ color: "#fff", opacity: .7, flexShrink: 0 }} />
-                  <div className="wo-info">
-                    <span className="wo-name">{t.name}</span>
-                    <div className="wo-tags">
-                      {t.woNumber && <span className="tag">WO#: {t.woNumber}</span>}
-                      {t.projectCode && <span className="tag">Code: {t.projectCode}</span>}
-                      {sd && <span className="tag tag-dt">{sd}</span>}
-                      {ed && <span className="tag tag-dt">→ {ed}</span>}
-                      {sd && ed && <span className="tag tag-days">{calcDays(sd,ed)} days</span>}
-                    </div>
+                  <div style={{ padding: "8px 8px 4px", marginTop: 6 }}>
+                    <button
+                      onClick={() => setShowProjectManager(true)}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 10,
+                        padding: "10px 12px", background: "#10b981", color: "#fff",
+                        border: "none", borderRadius: 7, fontSize: 13,
+                        fontWeight: 700, cursor: "pointer",
+                      }}>
+                      <FaPlus size={12} style={{ flexShrink: 0 }} />
+                      {!collapsed && <span style={{ whiteSpace: "nowrap" }}>New Project</span>}
+                    </button>
                   </div>
-                  {t.children?.length > 0 && (() => {
-                    const kids = t.children;
-                    const done = kids.filter(k => k.status==="COMPLETED"||k.status==="DONE").length;
-                    const pct = Math.round(kids.reduce((s,k) => s+(k.progressPercent||0),0)/kids.length);
+        </nav>
+
+        {!collapsed && (selProject || selWork) && (
+          <div style={S.sideContext}>
+            {selProject && (
+              <div style={S.sideCtxItem}>
+                <FaBuilding size={9} style={{ color: "#10b981", flexShrink: 0 }} />
+                <span style={{ fontSize: 10, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {selProject.projectName}
+                </span>
+              </div>
+            )}
+            {selWork && (
+              <div style={S.sideCtxItem}>
+                <FaTools size={9} style={{ color: "#8b5cf6", flexShrink: 0 }} />
+                <span style={{ fontSize: 10, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {selWork.workName}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+           <div style={{ padding: "10px", borderTop: "1px solid #1e293b",
+                display: "flex", flexDirection: "column", gap: 6 }}>
+                {!collapsed && onBack && (
+                  <button style={S.sideBack} onClick={onBack}>
+                    <FaArrowLeft size={11} /> Back to App
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    if (window.confirm("Logout?")) window.location.href = "/login";
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "9px 12px", background: "transparent",
+                    border: "1px solid #374151", borderRadius: 7,
+                    color: "#ef4444", fontSize: 12, fontWeight: 600,
+                    cursor: "pointer", width: "100%",
+                  }}>
+                  <FaArrowLeft size={11} style={{ flexShrink: 0 }} />
+                  {!collapsed && <span>Logout</span>}
+                </button>
+              </div>
+      </aside>
+
+      {/* ── MAIN ── */}
+      <main style={S.main}>
+        {toast && (
+          <div style={{
+            ...S.toast,
+            background: toast.type === "success" ? "#ecfdf5" : "#fef2f2",
+            borderLeft: `4px solid ${toast.type === "success" ? "#10b981" : "#ef4444"}`,
+            color:      toast.type === "success" ? "#065f46" : "#991b1b",
+          }}>
+            {toast.type === "success" ? "✓" : "✕"} {toast.msg}
+          </div>
+        )}
+
+        {/* ══ HOME ══ */}
+        {activeNav === "home" && (
+          <div>
+            <PageHeader title="Planning Dashboard" subtitle="Track works, line items and all changes in one place" />
+            <div style={S.kpiRow}>
+              <KpiCard label="Total Projects" value={projects.length}   icon="🏗️" color="#10b981" onClick={() => setActiveNav("projects")} />
+              <KpiCard label="Works"          value={works.length}      icon="🔧" color="#3b82f6" sub={selProject ? selProject.projectName : "Select a project"} onClick={() => setActiveNav("works")} />
+              <KpiCard label="Line Items"     value={lineItems.length}  icon="📋" color="#8b5cf6" sub={selWork ? selWork.workName : "Select a work"} onClick={() => setActiveNav("lineItems")} />
+              <KpiCard label="Completed"      value={doneCount}         icon="✅" color="#059669" sub={`of ${lineItems.length} items`} />
+              <KpiCard label="In Progress"    value={inProgressCount}   icon="🔄" color="#f59e0b" />
+              <KpiCard label="Overdue"        value={overdueCount}      icon="⚠️" color="#ef4444" />
+              <KpiCard label="Notifications"  value={activeNotifs.length} icon="🔔" color="#f97316" onClick={() => setActiveNav("notifications")} />
+            </div>
+
+            {activeNotifs.length > 0 && (
+              <div style={{ marginBottom: 24 }}>
+                <SectionTitle>🔔 Active Alerts</SectionTitle>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {activeNotifs.slice(0, 5).map(n => (
+                    <NotifBanner key={n.id} n={n} onDismiss={() => setDismissedNotifs(s => new Set([...s, n.id]))} />
+                  ))}
+                  {activeNotifs.length > 5 && (
+                    <button style={S.viewAllBtn} onClick={() => setActiveNav("notifications")}>
+                      View all {activeNotifs.length} notifications →
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {recentProjects.filter(p => !hiddenProjectIds.has(p.projectId)).length > 0 && (
+              <div>
+                <SectionTitle>🕐 Recently Opened Projects</SectionTitle>
+                <div style={S.cardGrid}>
+                  {recentProjects.filter(p => !hiddenProjectIds.has(p.projectId)).map(p => (
+                    <ProjectCard key={p.projectId} p={p}
+                      isNew={newProjectIds.has(p.projectId)}
+                      onOpen={() => goToWorks(p)}
+                      onHistory={() => loadHistory("project", p.projectId, `Project: ${p.projectName}`)} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══ PROJECTS ══ */}
+        {activeNav === "projects" && (
+          <div>
+            <PageHeader title="🏗️ Projects" subtitle="Select a project to manage its work schedules" />
+            <SearchBar value={searchTerm} onChange={setSearchTerm} placeholder="Search by name, code, or client…" />
+            <div style={S.cardGrid}>
+              {filteredProjects.length === 0 && <EmptyState msg="No projects found." />}
+              {filteredProjects.map(p => (
+                <ProjectCard key={p.projectId} p={p}
+                  isNew={newProjectIds.has(p.projectId)}
+                  onOpen={() => goToWorks(p)}
+                  onHistory={() => loadHistory("project", p.projectId, `Project: ${p.projectName}`)}
+                  onHide={() => {
+                    if (window.confirm(
+                      `"${p.projectName}" ko Planning Dashboard se hide karein?\n\n` +
+                      "✅ Project delete nahi hoga — sirf is list se chhup jaayega. " +
+                      "Wapas dikhane ke liye neeche 'Hidden Projects' section use karein."
+                    )) toggleHideProject(p.projectId, true);
+                  }} />
+              ))}
+            </div>
+
+            {hiddenProjectsList.length > 0 && (
+              <div style={{ marginTop: 28 }}>
+                <button
+                  onClick={() => setShowHidden(v => !v)}
+                  style={{ ...S.viewAllBtn, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {showHidden ? <FaChevronUp size={10}/> : <FaChevronDown size={10}/>}
+                  Hidden Projects ({hiddenProjectsList.length})
+                </button>
+
+                {showHidden && (
+                  <div style={{ ...S.cardGrid, marginTop: 14 }}>
+                    {hiddenProjectsList.map(p => (
+                      <ProjectCard key={p.projectId} p={p}
+                        isNew={newProjectIds.has(p.projectId)}
+                        hidden
+                        onOpen={() => goToWorks(p)}
+                        onHistory={() => loadHistory("project", p.projectId, `Project: ${p.projectName}`)}
+                        onUnhide={() => toggleHideProject(p.projectId, false)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══ WORKS ══ */}
+        {activeNav === "works" && (
+          <div>
+            <Breadcrumb parts={[
+              { label: "Projects", onClick: () => setActiveNav("projects") },
+              selProject ? { label: selProject.projectName } : null,
+            ].filter(Boolean)} />
+            <PageHeader title="🔧 Works"
+              subtitle={selProject ? `${selProject.projectName} — ${selProject.projectCode}` : "Select a project first"}>
+              {selProject && (
+                <PrimaryBtn icon={<FaPlus size={11}/>} label="New Work"
+                  onClick={() => { setEditingItem(null); setShowWorkForm(true); }} />
+              )}
+            </PageHeader>
+            {!selProject ? (
+              <div style={S.cardGrid}>
+                {sortedProjects.map(p => (
+                  <ProjectCard key={p.projectId} p={p}
+                    isNew={newProjectIds.has(p.projectId)}
+                    onOpen={() => setSelProject(p)}
+                    onHistory={() => loadHistory("project", p.projectId, `Project: ${p.projectName}`)} />
+                ))}
+              </div>
+            ) : (
+              <div style={S.cardGrid}>
+                {works.length === 0 && <EmptyState msg='No works yet. Click "New Work" to create the first one.' />}
+            {works.map(w => (
+              <WorkCard key={w.id} w={w}
+                onOpen={() => goToLineItems(w)}
+                onEdit={() => { setEditingItem(w); setShowWorkForm(true); }}
+                onDelete={() => deleteWork(w.id)}
+                onHistory={() => loadHistory("work", w.id, `Work: ${w.workName}`)}
+                onSaveTemplate={() => setSaveTemplateModal({ workId: w.id, workName: w.workName })} />
+            ))}
+
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══ LINE ITEMS ══ */}
+        {activeNav === "lineItems" && (
+          <div>
+            <Breadcrumb parts={[
+              { label: "Projects", onClick: () => setActiveNav("projects") },
+              selProject ? { label: selProject.projectName, onClick: () => setActiveNav("works") } : null,
+              selWork    ? { label: selWork.workName } : null,
+            ].filter(Boolean)} />
+            <PageHeader
+              title={`📋 ${selWork?.workName || "Line Items"}`}
+              subtitle={selWork ? `Work Order: ${selWork.workOrderNo}  ·  ${selProject?.projectName}` : "Select a work first"}>
+              <div style={{ display: "flex", gap: 8 }}>
+                {selWork && (
+                  <>
+                    <SecondaryBtn icon={<FaColumns size={11}/>} label="Revisions"
+                      onClick={loadRevisions} />
+                    <SecondaryBtn icon={<FaHistory size={11}/>} label="Full History"
+                      onClick={() => loadHistory("work", selWork.id, `Work: ${selWork.workName}`)} />
+                    <PrimaryBtn icon={<FaPlus size={11}/>} label="Add Line Item"
+                      onClick={() => { setEditingItem(null); setShowLineItemForm(true); }} />
+                  </>
+                )}
+              </div>
+            </PageHeader>
+
+            {!selWork ? (
+              <div style={{ color: "#64748b", textAlign: "center", padding: 60, fontSize: 14 }}>
+                Please select a Work from the Works tab first.
+              </div>
+            ) : (
+              <>
+                <div style={S.lineItemStrip}>
+                  {Object.entries(STATUS_META).map(([status, meta]) => {
+                    const count = lineItems.filter(i => i.status === status).length;
                     return (
-                      <div className="wo-prog">
-                        <div className="wo-pbar"><div className="wo-pfill" style={{width:`${pct}%`}}/></div>
-                        <span className="wo-ptxt">{pct}% · {done}/{kids.length}</span>
+                      <div key={status} style={{ ...S.stripPill, background: meta.bg, color: meta.color }}>
+                        {meta.icon} <span style={{ marginLeft: 5 }}>{status}: {count}</span>
                       </div>
                     );
-                  })()}
-                  <div className="wo-actions">
-                    <button className="wo-add" onClick={() => { setAddingTo(t.id); setExpanded(new Set([...expanded, t.id])); }}>
-                      <FaPlus size={9}/> Add Item
-                    </button>
-                    <button className="wo-del" onClick={() => deleteTask(t.id)}><FaTrash size={9}/></button>
+                  })}
+                </div>
+
+                <div style={S.infoBanner}>
+                  <span style={{ fontSize: 15 }}>💡</span>
+                  <span>
+                    Use <strong>± Days</strong> on Start/End date to shift with reason tracking.
+                    When <strong>Start Date shifts</strong>, End Date auto-adjusts to preserve duration.
+                    Click row name to view per-item revisions. Linked items cascade automatically (≥2 days).
+                  </span>
+                </div>
+
+                <div style={S.tableWrap}>
+                  <table style={S.table}>
+                    <thead>
+                      <tr style={S.thead}>
+                        {["SR","Line Item","Start Date","End Date","Days","Department","Assigned To","Status","Remark","Links","Revs","Actions"].map(h =>
+                          <th key={h} style={S.th}>{h}</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lineItems.length === 0 && (
+                        <tr><td colSpan={12} style={{ textAlign: "center", padding: 48, color: "#94a3b8", fontSize: 13 }}>
+                          No line items yet. Click "Add Line Item" to start.
+                        </td></tr>
+                      )}
+                      {lineItems.map((item, idx) => {
+                        const days    = daysBetween(item.startDate, item.endDate);
+                        const today   = new Date().toISOString().split("T")[0];
+                        const overdue = item.endDate && item.endDate < today
+                          && item.status !== "DONE" && item.status !== "CANCELLED";
+                        const isExpanded = expandedItem === item.id;
+                        const revs = itemRevisions[item.id] || [];
+                        const dateRevCount = revs.filter(h => h.field === "startDate" || h.field === "endDate").length;
+                        const linkedCount = (item.linkedItemIds || "").split(",").filter(Boolean).length;
+
+                        return (
+                          <React.Fragment key={item.id}>
+                            <tr style={{
+                              ...S.tr,
+                              background: overdue ? "#fff5f5" : idx % 2 === 0 ? "#fff" : "#fafafa",
+                              cursor: "pointer",
+                            }}>
+                              <td style={{ ...S.td, color: "#94a3b8", width: 40, textAlign: "center" }}>{item.srNo}</td>
+
+                              <td style={{ ...S.td, fontWeight: 600, color: "#1e293b", minWidth: 180 }}
+                                onClick={() => loadItemRevisions(item)}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  {overdue && <FaExclamationTriangle size={10} color="#ef4444" />}
+                                  <span>{item.lineItemName}</span>
+                                  {isExpanded ? <FaChevronUp size={9} color="#94a3b8"/> : <FaChevronDown size={9} color="#94a3b8"/>}
+                                </div>
+                              </td>
+
+                              <td style={S.td}>
+                                <DateShiftCell value={item.startDate} onShift={() => openDayModal(item, "startDate")} />
+                              </td>
+
+                              <td style={S.td}>
+                                <DateShiftCell value={item.endDate} onShift={() => openDayModal(item, "endDate")} />
+                              </td>
+
+                              <td style={{ ...S.td, textAlign: "center", fontWeight: 700,
+                                color: days > 14 ? "#dc2626" : days > 7 ? "#d97706" : "#059669" }}>
+                                {days}d
+                              </td>
+
+                              <td style={S.td}>
+                                {item.department
+                                  ? <span style={S.deptTag}>{item.department}</span>
+                                  : <span style={{ color: "#cbd5e1" }}>—</span>}
+                              </td>
+
+                              <td style={S.td}>
+                                {item.actionPerson
+                                  ? <div style={S.personTag}><FaUser size={8}/> {item.actionPerson}</div>
+                                  : <span style={{ color: "#cbd5e1" }}>—</span>}
+                              </td>
+
+                              <td style={S.td}><StatusBadge status={item.status} /></td>
+
+                              <td style={{ ...S.td, color: "#64748b", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+                                {item.remark || <span style={{ color: "#cbd5e1" }}>—</span>}
+                              </td>
+
+                              <td style={{ ...S.td, textAlign: "center" }}>
+                                {linkedCount > 0
+                                  ? <span style={S.linkPill}><FaLink size={8}/> {linkedCount}</span>
+                                  : <span style={{ color: "#e2e8f0" }}>—</span>}
+                              </td>
+
+                              <td style={{ ...S.td, textAlign: "center" }}>
+                                <button
+                                  onClick={() => loadItemRevisions(item)}
+                                  style={{
+                                    background: dateRevCount > 0 ? "#fff7ed" : "#f8fafc",
+                                    border: `1px solid ${dateRevCount > 0 ? "#fdba74" : "#e2e8f0"}`,
+                                    color: dateRevCount > 0 ? "#c2410c" : "#94a3b8",
+                                    borderRadius: 99, padding: "3px 9px",
+                                    fontSize: 11, fontWeight: 700, cursor: "pointer",
+                                    display: "inline-flex", alignItems: "center", gap: 4,
+                                  }}>
+                                  <FaHistory size={8}/>
+                                  {isExpanded ? "Close" : dateRevCount > 0 ? `Rev ${dateRevCount}` : "0"}
+                                </button>
+                              </td>
+
+                              <td style={S.td}>
+                                <div style={{ display: "flex", gap: 4 }}>
+                                  <ActionBtn color="#2563eb" title="Edit"
+                                    onClick={() => { setEditingItem(item); setShowLineItemForm(true); }}>
+                                    <FaEdit size={11}/>
+                                  </ActionBtn>
+                                  <ActionBtn color="#ef4444" title="Delete" onClick={() => deleteLineItem(item.id)}>
+                                    <FaTrash size={11}/>
+                                  </ActionBtn>
+                                </div>
+                              </td>
+                            </tr>
+
+                            {isExpanded && (
+                              <tr>
+                                <td colSpan={12} style={{ padding: 0, background: "#f8fafc", borderBottom: "2px solid #e2e8f0" }}>
+                                  <RevisionPanel item={item} revisions={revs} />
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ══ REVISIONS PAGE ══ */}
+        {activeNav === "revisions" && (
+          <RevisionsPage
+            history={history}
+            lineItems={lineItems}
+            selProject={selProject}
+            selWork={selWork}
+            onDownload={() => openDownloadModal(history, "Revisions")}
+          />
+        )}
+
+        {/* ══ HISTORY ══ */}
+        {activeNav === "history" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 21, fontWeight: 700, color: "#1e293b", borderLeft: "4px solid #ef4444", paddingLeft: 12 }}>
+                  📊 Change History
+                </h2>
+                <p style={{ margin: "4px 0 0 16px", fontSize: 12, color: "#94a3b8" }}>{historyTitle}</p>
+              </div>
+           {history.length > 0 && (
+             <div style={{ display: "flex", gap: 8 }}>
+               <button onClick={() => openDownloadModal(history, "Change History")}
+                 style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px",
+                   background: "#059669", color: "#fff", border: "none", borderRadius: 8,
+                   fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                 <FaFileExcel size={13}/> Export to Excel
+               </button>
+               {selWork?.id && (
+                 <button
+                   onClick={() => downloadSchedulePdf(selWork.id, selWork.workName)}
+                   style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", background: "#1C3358", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                   <FaDownload size={13}/> Schedule PDF
+                 </button>
+               )}
+             </div>
+           )}
+            </div>
+
+            {history.length === 0 ? (
+              <EmptyState msg="No change history yet. Every date change or edit will appear here with the reason." />
+            ) : (
+              <>
+                <div style={S.histSummary}>
+                  <div style={S.histSumItem}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: "#1e293b" }}>{history.length}</span>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Total Changes</span>
+                  </div>
+                  <div style={S.histSumItem}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: "#f59e0b" }}>
+                      {history.filter(h => h.cascadedItemNames).length}
+                    </span>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>With Cascade</span>
+                  </div>
+                  <div style={S.histSumItem}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: "#ef4444" }}>
+                      {history.filter(h => h.field?.includes("Date") && daysBetween(h.oldValue, h.newValue) > 0).length}
+                    </span>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Date Delays</span>
+                  </div>
+                  <div style={S.histSumItem}>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: "#8b5cf6" }}>
+                      {[...new Set(history.map(h => h.changedBy).filter(Boolean))].length}
+                    </span>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Contributors</span>
                   </div>
                 </div>
-              </td>
-            </tr>
-          )}
-
-          {isWO && addingTo === t.id && (
-            <tr className="add-row">
-              <td colSpan={showPrevCols ? 17 : 14}>
-                <div className="add-bar" style={{ paddingLeft: 36 }}>
-                  <span className="add-pre">+</span>
-                  <input autoFocus className="add-in" placeholder="Line item name…" value={newTaskName}
-                    onChange={e => setNewTaskName(e.target.value)}
-                    onKeyDown={e => { if(e.key==="Enter") addChild(t.id); if(e.key==="Escape"){setAddingTo(null);setNewTaskName("");} }}/>
-                  <button className="btn-ok" onClick={() => addChild(t.id)} disabled={loading}>Add</button>
-                  <button className="btn-no" onClick={() => { setAddingTo(null); setNewTaskName(""); }}>Cancel</button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {history.map((h, i) => <HistoryCard key={i} h={h} index={i + 1} />)}
                 </div>
-              </td>
-            </tr>
-          )}
+              </>
+            )}
+          </div>
+        )}
 
-          {!isWO && (
-            <tr
-              className={`li-row${linkMode?" link-pick":""}${linkSource?.id===t.id?" link-sel":""}${hasDiff?" has-diff":""}`}
-              onClick={() => {
-                if (!linkMode) return;
-                if (!linkSource) { setLinkSource({ id: t.id, name: t.name, endDate: t.endDate }); }
-                else if (linkSource.id !== t.id) { addDependency(linkSource, t.id, linkLag); }
-              }}>
+        {/* ══ NOTIFICATIONS ══ */}
+        {activeNav === "notifications" && (
+          <NotificationsPage
+            notifications={activeNotifs}
+            dismissed={dismissedNotifs}
+            onDismiss={(id) => setDismissedNotifs(s => new Set([...s, id]))}
+            onDismissAll={() => setDismissedNotifs(new Set(notifications.map(n => n.id)))}
+          />
+        )}
+        {/* ══ TEMPLATES ══ */}
+                {activeNav === "templates" && (
+                  <WorkTemplatePage
+                    onTemplateApplied={(newWork) => {
+                      showToast(`Work "${newWork.workName}" created! Add dates to get started.`);
+                      setSelWork(newWork);
+                      setActiveNav("lineItems");
+                    }}
+                  />
+                )}
+      </main>
 
-              {/* WBS */}
-              <td className="td-wbs">
-                <div className="wbs-cell" style={{ paddingLeft: level * 16 }}>
-                  {hasCh
-                    ? <button className="exp-sm" onClick={e => { e.stopPropagation(); toggle(t.id); }}>
-                        {isOpen ? <FaChevronDown size={8}/> : <FaChevronRight size={8}/>}
-                      </button>
-                    : <span className="no-exp"/>
-                  }
-                  <span className="wbs-num">{t.wbsId||"—"}</span>
-                  {depInfo && <span className="dep-dot" title={`Dep: ${depTask?.name||""} +${depInfo.lag}d`}><FaLink size={7}/></span>}
-                </div>
-              </td>
-
-              {/* Name */}
-              <td className="td-name">
-                {isEditing
-                  ? <input className="ei" value={editForm.name||""} onChange={e => setEditForm({...editForm, name: e.target.value})}/>
-                  : <div className="name-cell">
-                      <span className="li-name">{t.name}</span>
-                      {depTask && <span className="dep-pill"><FaLink size={7}/> {depTask.wbsId}</span>}
-                    </div>
-                }
-              </td>
-
-              {/* Type */}
-              <td className="td-type">
-                {isEditing
-                  ? <select className="es" value={editForm.taskType||""} onChange={e => setEditForm({...editForm, taskType: e.target.value})}>
-                      <option value="">—</option>
-                      {TASK_TYPES.map(tt => <option key={tt.v} value={tt.v}>{tt.v} — {tt.label}</option>)}
-                    </select>
-                  : tm
-                    ? <span className="type-pill" style={{background:tm.color+"18",color:tm.color,border:`1px solid ${tm.color}40`}}>{tm.v}</span>
-                    : <span className="dim">—</span>
-                }
-              </td>
-
-              {/* Sqft */}
-              <td className="td-sqft">
-                {isEditing
-                  ? <input className="ei num" type="number" placeholder="sqft" value={editForm.quantitySqft||""} onChange={e=>setEditForm({...editForm,quantitySqft:e.target.value})}/>
-                  : <span className="sqft-val">{t.quantitySqft||"—"}</span>
-                }
-              </td>
-
-              {/* Dept */}
-              <td className="td-dept">
-                {isEditing
-                  ? <select className="es" value={editForm.department||""} onChange={e=>setEditForm({...editForm,department:e.target.value})}>
-                      {DEPARTMENTS.map((d,i) => <option key={i} value={d}>{d||"—"}</option>)}
-                    </select>
-                  : <span className="dept-pill">{t.department||"—"}</span>
-                }
-              </td>
-
-              {/* Person */}
-              <td className="td-per">
-                {isEditing
-                  ? <input className="ei" value={editForm.actionPerson||""} onChange={e=>setEditForm({...editForm,actionPerson:e.target.value})}/>
-                  : <span className="person-val">{t.actionPerson||"—"}</span>
-                }
-              </td>
-
-              {/* Start */}
-              <td className={`td-dt${hasDiff&&!isEditing?" dt-new":""}`}>
-                {isEditing
-                  ? <input type="date" className="ei" value={editForm.startDate||""} onChange={e=>setEditForm({...editForm,startDate:e.target.value})}/>
-                  : <span className="dt-val">{sd||"—"}</span>
-                }
-              </td>
-
-              {/* End */}
-              <td className={`td-dt${hasDiff&&!isEditing?" dt-new":""}`}>
-                {isEditing
-                  ? <input type="date" className="ei" value={editForm.endDate||""} onChange={e=>setEditForm({...editForm,endDate:e.target.value})}/>
-                  : <span className="dt-val">{ed||"—"}</span>
-                }
-              </td>
-
-              {/* Prev Start */}
-              {showPrevCols && (
-                <td className={`td-dt td-prev${hasDiff?" dt-prev-val":""}`}>
-                  <span className={hasDiff?"dt-strike":"dim"}>{psd||"—"}</span>
-                </td>
-              )}
-
-              {/* Prev End */}
-              {showPrevCols && (
-                <td className={`td-dt td-prev${hasDiff?" dt-prev-val":""}`}>
-                  <span className={hasDiff?"dt-strike":"dim"}>{ped||"—"}</span>
-                </td>
-              )}
-
-              {/* Change Reason */}
-              {showPrevCols && (
-                <td className="td-reason">
-                  {isEditing
-                    ? <input className="ei" placeholder="Reason…" value={editForm.dateChangeReason||""} onChange={e=>setEditForm({...editForm,dateChangeReason:e.target.value})}/>
-                    : <span className={`reason-txt${hasDiff?" reason-active":""}`} title={t.dateChangeReason}>
-                        {t.dateChangeReason||(hasDiff?<span style={{color:"#f59e0b",fontStyle:"italic"}}>No reason</span>:"—")}
-                      </span>
-                  }
-                </td>
-              )}
-
-              {/* Days */}
-              <td className="td-days"><span className="days-val">{calcDays(sd,ed)}</span></td>
-
-              {/* Progress */}
-              <td className="td-prog">
-                {isEditing
-                  ? <input type="number" min="0" max="100" className="ei num" value={editForm.progressPercent??0} onChange={e=>setEditForm({...editForm,progressPercent:e.target.value})}/>
-                  : <div className="prog-row">
-                      <div className="prog-bg">
-                        <div className="prog-fill" style={{width:`${t.progressPercent||0}%`,background:t.progressPercent>=100?"#10b981":t.progressPercent>=50?"#6366f1":"#94a3b8"}}/>
-                      </div>
-                      <span className="prog-txt">{t.progressPercent||0}%</span>
-                    </div>
-                }
-              </td>
-
-              {/* Status */}
-              <td className="td-status">
-                {isEditing
-                  ? <select className="es" value={editForm.status||"NOT_STARTED"} onChange={e=>setEditForm({...editForm,status:e.target.value})}>
-                      {STATUSES.map((s,i) => <option key={i} value={s}>{STATUS_META[s].label}</option>)}
-                    </select>
-                  : <span className="status-pill" style={{background:sm.bg,color:sm.color,border:`1px solid ${sm.border}`}}>{sm.label}</span>
-                }
-              </td>
-
-              {/* Remark */}
-              <td className="td-rem">
-                {isEditing
-                  ? <input className="ei" value={editForm.remark||""} onChange={e=>setEditForm({...editForm,remark:e.target.value})}/>
-                  : <span className="rem-txt" title={t.remark}>{t.remark||"—"}</span>
-                }
-              </td>
-
-              {/* Actions */}
-              <td className="td-act">
-                {isEditing
-                  ? <div className="act-row">
-                      <button className="ib save" title="Save" onClick={handleSaveEdit} disabled={loading}><FaSave size={10}/></button>
-                      <button className="ib canc" title="Cancel" onClick={()=>setEditingId(null)}><FaTimes size={10}/></button>
-                    </div>
-                  : <div className="act-row">
-                      <button className={`ib hist${histCount>0?" hist-has":""}`} title={`Date History (${histCount} entries)`} onClick={()=>setHistoryTask(t)}>
-                        <FaHistory size={9}/>
-                        {histCount > 0 && <span className="hist-cnt">{histCount}</span>}
-                      </button>
-                      <button className="ib add" title="Add sub-task" onClick={()=>{setAddingTo(t.id);setExpanded(new Set([...expanded,t.id]));}}><FaPlus size={9}/></button>
-                      <button className="ib edt" title="Edit" onClick={()=>{
-                        setEditingId(t.id);
-                        setEditForm({
-                          name:t.name, department:t.department||"", actionPerson:t.actionPerson||"",
-                          quantitySqft:t.quantitySqft||"", startDate:fmtDate(t.startDate), endDate:fmtDate(t.endDate),
-                          progressPercent:t.progressPercent||0, status:t.status||"NOT_STARTED",
-                          remark:t.remark||"", taskType:t.taskType||"", dateChangeReason:t.dateChangeReason||"",
-                        });
-                      }}><FaEdit size={9}/></button>
-                      {depInfo && <button className="ib unlink" title="Remove dependency" onClick={()=>removeDependency(t.id)}><FaUnlink size={8}/></button>}
-                      <button className="ib del" title="Delete" onClick={()=>deleteTask(t.id)}><FaTrash size={9}/></button>
-                    </div>
-                }
-              </td>
-            </tr>
-          )}
-
-          {!isWO && addingTo === t.id && (
-            <tr className="add-row">
-              <td colSpan={showPrevCols ? 17 : 14}>
-                <div className="add-bar" style={{ paddingLeft: (level+1)*16+32 }}>
-                  <span className="add-pre">{t.wbsId}.x</span>
-                  <input autoFocus className="add-in" placeholder="Sub-task…" value={newTaskName}
-                    onChange={e=>setNewTaskName(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter")addChild(t.id);if(e.key==="Escape"){setAddingTo(null);setNewTaskName("");}}}/>
-                  <button className="btn-ok" onClick={()=>addChild(t.id)} disabled={loading}>Add</button>
-                  <button className="btn-no" onClick={()=>{setAddingTo(null);setNewTaskName("");}}>Cancel</button>
-                </div>
-              </td>
-            </tr>
-          )}
-
-          {isOpen && t.children?.length > 0 && renderRows(t.children, level+1)}
-        </React.Fragment>
-      );
-    });
-
-  return (
-    <div className="app">
-      {/* Toast */}
-      {toast.msg && (
-        <div className={`toast${toast.type==="err"?" toast-err":""}`}>
-          <FaCheckCircle size={13}/> {toast.msg}
-        </div>
+      {/* ══ MODALS ══ */}
+      {showWorkForm && (
+        <Modal title={editingItem ? "Edit Work" : "New Work"} onClose={() => { setShowWorkForm(false); setEditingItem(null); }}>
+          <WorkForm
+            initial={editingItem}
+            projects={projects}
+            selectedProject={selProject}
+            onProjectSelect={p => setSelProject(p)}
+            onSave={saveWork}
+            onCancel={() => { setShowWorkForm(false); setEditingItem(null); }} />
+        </Modal>
       )}
 
-      {showPDFModal && <PDFExportModal tasks={tasks} selectedProject={selectedProject} deps={deps} onClose={()=>setShowPDFModal(false)}/>}
-      {historyTask && <DateHistoryModal task={historyTask} onClose={()=>setHistoryTask(null)}/>}
-      {dateReasonModal && (
-        <DateReasonModal
-          task={dateReasonModal.task}
-          newStart={editForm.startDate}
-          newEnd={editForm.endDate}
-          onConfirm={reason => doSaveEdit(reason)}
-          onSkip={() => doSaveEdit(null)}
-          onCancel={() => setDateReasonModal(null)}
+      {showLineItemForm && (
+        <Modal
+          title={editingItem ? "Edit Line Item" : "Add Line Item"}
+          onClose={() => { setShowLineItemForm(false); setEditingItem(null); }}
+          wide>
+          <LineItemForm
+            initial={editingItem}
+            existingItems={lineItems}
+            onSave={handleLineItemSave}
+            onCancel={() => { setShowLineItemForm(false); setEditingItem(null); }} />
+        </Modal>
+      )}
+
+      {editReasonModal && (
+        <Modal title="✏️ Reason for Edit" onClose={() => { setEditReasonModal(null); setEditReason(""); }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: 14, fontSize: 13 }}>
+              <div style={{ fontWeight: 700, color: "#1e293b", marginBottom: 4 }}>{editReasonModal.item?.lineItemName}</div>
+              <div style={{ color: "#0369a1", fontSize: 12 }}>
+                You are editing this line item. Describe why this change is needed.
+                <br/>
+                <strong>Note:</strong> Linking changes are not tracked in history — only date, status, and remark changes.
+              </div>
+            </div>
+            <div>
+              <label style={S.lbl}>Reason for Edit <span style={{ color: "#ef4444" }}>*</span></label>
+              <textarea value={editReason} onChange={e => setEditReason(e.target.value)}
+                placeholder="e.g. Client changed design, department reassigned, status updated after site visit…"
+                style={{ ...S.input, height: 88, resize: "vertical" }} autoFocus />
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button style={S.cancelBtn} onClick={() => { setEditReasonModal(null); setEditReason(""); }}>Cancel</button>
+              <button style={S.saveBtn} onClick={() => {
+                if (!editReason.trim()) { showToast("Please enter a reason", "error"); return; }
+                doSaveLineItem(editReasonModal.newForm, editReason);
+              }}>
+                <FaSave size={11}/> Save with Reason
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {dayModal && (
+        <Modal title="📅 Shift Date — Enter Days" onClose={() => setDayModal(null)}>
+          <DayOffsetModalContent
+            item={dayModal.item}
+            field={dayModal.field}
+            dayInput={dayInput}
+            setDayInput={setDayInput}
+            dayReason={dayReason}
+            setDayReason={setDayReason}
+            onConfirm={confirmDayChange}
+            onCancel={() => setDayModal(null)}
+            lineItems={lineItems}
+          />
+        </Modal>
+      )}
+
+      {/* ── Download Selection Modal ── */}
+      {downloadModal && (
+        <DownloadModal
+          history={downloadModal.history}
+          projectName={downloadModal.projectName}
+          workName={downloadModal.workName}
+          sheetLabel={downloadModal.sheetLabel}
+          onClose={() => setDownloadModal(null)}
         />
       )}
 
-      {/* SIDEBAR */}
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-icon"><FaTable size={13}/></div>
-          <div className="brand-text"><span className="brand-main">PLANNING</span><span className="brand-sub">DASHBOARD</span></div>
-        </div>
-        <div className="sidebar-section">PROJECTS</div>
-        <div className="proj-list">
-          {projects.map(p => (
-            <div key={p.id} className={`proj-item${selectedProject?.id===p.id?" active":""}`} onClick={()=>setSelectedProject(p)}>
-              {selectedProject?.id===p.id ? <FaFolderOpen size={12}/> : <FaFolder size={12}/>}
-              <span>{p.projectName}</span>
-            </div>
-          ))}
-        </div>
-        <button className="btn-new-proj" onClick={()=>setShowProjectForm(v=>!v)}><FaPlus size={9}/> New Project</button>
-        {showProjectForm && (
-          <div className="new-proj-form">
-            <input placeholder="Project name…" value={newProjectName} onChange={e=>setNewProjectName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createProject()}/>
-            <button onClick={createProject} disabled={loading}>Create</button>
-          </div>
-        )}
-        <div className="logout" onClick={()=>{localStorage.removeItem("user");navigate("/");}}>
-          <FaSignOutAlt size={11}/> Logout
-        </div>
-      </aside>
-
-      {/* MAIN */}
-      <main className="main">
-        {/* Top bar */}
-        <div className="topbar">
-          <div className="topbar-left">
-            <div>
-              <h1 className="topbar-title">{selectedProject ? selectedProject.projectName : "Select a Project"}</h1>
-              <p className="topbar-meta">
-                {selectedProject
-                  ? `${workOrders} work orders · ${lineItems.length} tasks · ${avgProgress}% avg${dateChanged>0?` · ${dateChanged} date changes`:""}`
-                  : "Choose a project from the sidebar"}
-              </p>
-            </div>
-          </div>
-          <div className="topbar-user">
-            <div className="avatar">{user.fullName?.charAt(0)?.toUpperCase()||"P"}</div>
-            <span>{user.fullName||"Planning"}</span>
-          </div>
-        </div>
-
-        {selectedProject && (
-          <div className="content">
-            {/* Stats row */}
-            <div className="stats-row">
-              <div className="stat s-wo"><div className="stat-val">{workOrders}</div><div className="stat-lbl">Work Orders</div></div>
-              <div className="stat s-all"><div className="stat-val">{lineItems.length}</div><div className="stat-lbl">Total Tasks</div></div>
-              <div className="stat s-ip"><div className="stat-val">{inProgress}</div><div className="stat-lbl">In Progress</div></div>
-              <div className="stat s-done"><div className="stat-val">{completed}</div><div className="stat-lbl">Completed</div></div>
-              <div className="stat s-del"><div className="stat-val">{delayed}</div><div className="stat-lbl">Delayed</div></div>
-              <div className="stat s-oh"><div className="stat-val">{onHold}</div><div className="stat-lbl">On Hold</div></div>
-              {dateChanged > 0 && <div className="stat s-dc"><div className="stat-val">{dateChanged}</div><div className="stat-lbl">Date Changed</div></div>}
-              <div className="stat s-prog">
-                <div className="stat-prog-bar"><div className="stat-prog-fill" style={{width:`${avgProgress}%`}}/></div>
-                <div className="stat-val">{avgProgress}%</div>
-                <div className="stat-lbl">Overall</div>
-              </div>
-            </div>
-
-            {/* Toolbar */}
-            <div className="toolbar">
-              <div className="search-box">
-                <FaSearch size={11} style={{color:"#94a3b8"}}/>
-                <input placeholder="Search tasks, departments, people…" value={search} onChange={e=>setSearch(e.target.value)}/>
-                {search && <button className="clr-search" onClick={()=>setSearch("")}><FaTimes size={9}/></button>}
-              </div>
-              <div className="toolbar-btns">
-                <button className="tb-btn" title={allExpanded?"Collapse all":"Expand all"} onClick={allExpanded?collapseAll:expandAll}>
-                  {allExpanded ? <FaCompressAlt size={11}/> : <FaExpandAlt size={11}/>}
-                </button>
-                <button className={`tb-btn${showPrevCols?" tb-btn-on":""}`} title="Toggle Prev Date Columns" onClick={()=>setShowPrevCols(v=>!v)}>
-                  <FaClock size={11}/>
-                </button>
-                <button className="tb-btn tb-btn-pdf" title="Export PDF" onClick={()=>setShowPDFModal(true)} disabled={tasks.length===0}>
-                  <FaFilePdf size={12}/>
-                </button>
-                <button className={`tb-btn${linkMode?" tb-btn-on":""}`} title={linkMode?"Cancel Link Mode":"Set Dependency"} onClick={()=>{setLinkMode(v=>!v);setLinkSource(null);}}>
-                  {linkMode ? <FaUnlink size={11}/> : <FaLink size={11}/>}
-                </button>
-                <button className="btn-primary" onClick={()=>setShowWOForm(v=>!v)}>
-                  <FaBriefcase size={11}/> New Work Order
-                </button>
-              </div>
-            </div>
-
-            {/* Link mode banner */}
-            {linkMode && (
-              <div className="link-banner">
-                <FaLink size={10}/>
-                {linkSource
-                  ? <span>Click the <strong>target task</strong> — it will follow <em>{linkSource.name}</em>'s end date</span>
-                  : <span>Click a row to set it as the <strong>predecessor task</strong></span>
-                }
-                <div className="lag-input">
-                  <label>Lag days:</label>
-                  <input type="number" value={linkLag} min={-30} max={60} onChange={e=>setLinkLag(Number(e.target.value))}/>
-                </div>
-                <button className="btn-no" style={{marginLeft:"auto"}} onClick={()=>{setLinkMode(false);setLinkSource(null);}}>Cancel</button>
-              </div>
+       {/* ── Save As Template Modal ── */}
+            {saveTemplateModal && (
+              <SaveAsTemplateModal
+                workId={saveTemplateModal.workId}
+                workName={saveTemplateModal.workName}
+                onClose={() => setSaveTemplateModal(null)}
+                onSaved={() => {
+                  setSaveTemplateModal(null);
+                  showToast("Template saved successfully ✓");
+                }}
+                showToast={showToast}
+              />
             )}
-
-            {/* Date change legend */}
-            {showPrevCols && dateChanged > 0 && (
-              <div className="legend-bar">
-                <FaHistory size={10}/>
-                <strong>{dateChanged}</strong> tasks have changed dates.
-                <span className="leg-item"><span className="leg-dot green"/>Current (updated)</span>
-                <span className="leg-item"><span className="leg-dot red"/>Previous (struck through)</span>
-                <span style={{color:"#94a3b8",fontSize:10}}>Click 🕐 to view full history per task</span>
-              </div>
-            )}
-
-            {/* WO Form */}
-            {showWOForm && (
-              <div className="wo-form-card">
-                <div className="wo-form-head"><FaClipboardList size={13}/><h4>Create Work Order</h4></div>
-                <div className="wo-form-grid">
-                  <div className="field fg-2"><label>WO Name *</label>
-                    <input placeholder="e.g. TOILET CASEMENT WINDOW WORK SCHEDULE" value={woForm.name} onChange={e=>setWoForm({...woForm,name:e.target.value})} onKeyDown={e=>e.key==="Enter"&&createWorkOrder()}/></div>
-                  <div className="field fg-2"><label>WO Number</label>
-                    <input placeholder="e.g. ARPL/REGENT/FAÇADE/2025-26/206" value={woForm.woNumber} onChange={e=>setWoForm({...woForm,woNumber:e.target.value})}/></div>
-                  <div className="field"><label>Project Code</label>
-                    <input placeholder="e.g. ODL1054" value={woForm.projectCode} onChange={e=>setWoForm({...woForm,projectCode:e.target.value})}/></div>
-                  <div className="field"><label>Start Date</label>
-                    <input type="date" value={woForm.startDate} onChange={e=>setWoForm({...woForm,startDate:e.target.value})}/></div>
-                  <div className="field"><label>End Date</label>
-                    <input type="date" value={woForm.endDate} onChange={e=>setWoForm({...woForm,endDate:e.target.value})}/></div>
-                </div>
-                <div className="wo-form-foot">
-                  <button className="btn-primary" onClick={createWorkOrder} disabled={loading}>
-                    {loading ? <FaCircleNotch className="spin"/> : "Create Work Order"}
+            {showProjectManager && (
+              <div style={{
+                position: "fixed", inset: 0, background: "rgba(15,23,42,0.75)",
+                backdropFilter: "blur(4px)", zIndex: 2000, overflowY: "auto",
+              }}>
+                <div style={{ position: "relative" }}>
+                  <button
+                    onClick={() => setShowProjectManager(false)}
+                    style={{
+                      position: "fixed", top: 16, right: 16, zIndex: 2001,
+                      background: "#ef4444", color: "#fff", border: "none",
+                      borderRadius: "50%", width: 36, height: 36,
+                      fontSize: 18, cursor: "pointer", fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                    ✕
                   </button>
-                  <button className="btn-ghost" onClick={()=>setShowWOForm(false)}>Cancel</button>
+                  <ProjectManagerPage />
                 </div>
               </div>
             )}
-
-            {/* Table */}
-            <div className="table-wrap">
-              {fetching ? (
-                <div className="loading-state"><FaCircleNotch className="spin-lg"/> Loading tasks…</div>
-              ) : tasks.length === 0 ? (
-                <div className="empty-state">
-                  <FaClipboardList size={40}/>
-                  <p>No work orders yet</p>
-                  <span>Click <strong>New Work Order</strong> to get started.</span>
-                </div>
-              ) : (
-                <table className="main-table">
-                  <thead>
-                    <tr>
-                      <th className="th-wbs">WBS</th>
-                      <th className="th-name">Task / Material Details</th>
-                      <th className="th-type">Type</th>
-                      <th className="th-sqft">Qty (sqft)</th>
-                      <th className="th-dept">Department</th>
-                      <th className="th-per">Action Person</th>
-                      <th className="th-dt">Plan Start</th>
-                      <th className="th-dt">Plan End</th>
-                      {showPrevCols && <th className="th-dt th-prev">Prev Start</th>}
-                      {showPrevCols && <th className="th-dt th-prev">Prev End</th>}
-                      {showPrevCols && <th className="th-reason th-prev">Change Reason</th>}
-                      <th className="th-days">Days</th>
-                      <th className="th-prog">Progress</th>
-                      <th className="th-sts">Status</th>
-                      <th className="th-rem">Remark</th>
-                      <th className="th-act">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>{renderRows(tree)}</tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        )}
-
-        {!selectedProject && (
-          <div className="no-project">
-            <FaFolderOpen size={48}/>
-            <h2>No Project Selected</h2>
-            <p>Pick a project from the sidebar or create a new one.</p>
-          </div>
-        )}
-      </main>
-
-      <style>{`
-/* ─── RESET & BASE ─── */
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;background:#eef2f7}
-.app{display:flex;height:100vh;overflow:hidden}
-
-/* ─── TOAST ─── */
-.toast{position:fixed;top:16px;right:16px;background:#1e3a5f;color:#fff;padding:10px 18px;border-radius:8px;display:flex;align-items:center;gap:8px;font-size:12px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.25);animation:toastIn .2s ease}
-.toast-err{background:#dc2626}
-@keyframes toastIn{from{transform:translateX(110%)}to{transform:translateX(0)}}
-
-/* ─── SIDEBAR ─── */
-.sidebar{width:210px;background:#1e3a5f;display:flex;flex-direction:column;padding:16px 12px;flex-shrink:0;overflow-y:auto}
-.brand{display:flex;align-items:center;gap:10px;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid rgba(255,255,255,.1)}
-.brand-icon{background:rgba(255,255,255,.15);width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0}
-.brand-text{display:flex;flex-direction:column;gap:1px}
-.brand-main{font-size:11px;font-weight:800;letter-spacing:2px;color:#fff}
-.brand-sub{font-size:8px;letter-spacing:1px;color:rgba(255,255,255,.45);font-weight:600}
-.sidebar-section{font-size:9px;font-weight:700;color:rgba(255,255,255,.3);letter-spacing:1.5px;margin-bottom:6px;padding:0 4px}
-.proj-list{margin-bottom:8px;flex:1;overflow-y:auto}
-.proj-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;color:rgba(255,255,255,.55);font-size:12px;margin-bottom:2px;transition:all .15s;white-space:nowrap;overflow:hidden}
-.proj-item span{overflow:hidden;text-overflow:ellipsis}
-.proj-item:hover{background:rgba(255,255,255,.08);color:#fff}
-.proj-item.active{background:rgba(255,255,255,.18);color:#fff;font-weight:600}
-.btn-new-proj{display:flex;align-items:center;gap:6px;width:100%;background:transparent;border:1px dashed rgba(255,255,255,.2);color:rgba(255,255,255,.45);padding:7px 9px;border-radius:6px;cursor:pointer;font-size:11px;transition:all .15s;margin-bottom:6px}
-.btn-new-proj:hover{border-color:rgba(255,255,255,.5);color:rgba(255,255,255,.8)}
-.new-proj-form{margin-bottom:8px;display:flex;flex-direction:column;gap:5px}
-.new-proj-form input{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#fff;padding:7px 9px;border-radius:6px;font-size:12px;outline:none}
-.new-proj-form input::placeholder{color:rgba(255,255,255,.35)}
-.new-proj-form input:focus{border-color:rgba(255,255,255,.4)}
-.new-proj-form button{background:rgba(255,255,255,.18);color:#fff;border:none;padding:7px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:background .15s}
-.new-proj-form button:hover{background:rgba(255,255,255,.28)}
-.logout{display:flex;align-items:center;gap:8px;padding:9px 7px;color:rgba(255,255,255,.35);cursor:pointer;font-size:12px;border-radius:6px;transition:all .15s;margin-top:auto}
-.logout:hover{color:#ef4444;background:rgba(239,68,68,.1)}
-
-/* ─── MAIN ─── */
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;background:#f1f5f9}
-
-/* ─── TOPBAR ─── */
-.topbar{background:#fff;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;flex-shrink:0;gap:12px}
-.topbar-title{font-size:15px;font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.topbar-meta{font-size:11px;color:#64748b;margin-top:1px;white-space:nowrap}
-.topbar-user{display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;flex-shrink:0}
-.avatar{background:#1e3a5f;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0}
-
-/* ─── CONTENT AREA ─── */
-.content{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
-
-/* ─── STATS ─── */
-.stats-row{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
-.stat{background:#fff;border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:8px;border:1px solid #e2e8f0;min-width:0}
-.stat-val{font-size:18px;font-weight:700;line-height:1;color:#1e3a5f}
-.stat-lbl{font-size:9px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
-.s-ip .stat-val{color:#2563eb}
-.s-done .stat-val{color:#16a34a}
-.s-del .stat-val{color:#dc2626}
-.s-oh .stat-val{color:#d97706}
-.s-dc{border:1px solid #fca5a5}.s-dc .stat-val{color:#dc2626}
-.stat-prog-bar{width:48px;height:4px;background:#e2e8f0;border-radius:99px;overflow:hidden}
-.stat-prog-fill{height:100%;background:#1e3a5f;border-radius:99px;transition:width .4s}
-
-/* ─── TOOLBAR ─── */
-.toolbar{display:flex;gap:8px;align-items:center;flex-shrink:0;background:#fff;padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0}
-.search-box{display:flex;align-items:center;gap:6px;flex:1;padding:0 4px}
-.search-box input{border:none;outline:none;font-size:12px;width:100%;background:transparent;color:#334155}
-.clr-search{background:none;border:none;cursor:pointer;color:#94a3b8;padding:0;display:flex}
-.toolbar-btns{display:flex;gap:6px;align-items:center;flex-shrink:0}
-.tb-btn{background:#f8fafc;border:1px solid #e2e8f0;color:#64748b;width:30px;height:30px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
-.tb-btn:hover{background:#eef2ff;border-color:#6366f1;color:#6366f1}
-.tb-btn:disabled{opacity:.4;cursor:not-allowed}
-.tb-btn-on{background:#eef2ff !important;border-color:#6366f1 !important;color:#6366f1 !important}
-.tb-btn-pdf{color:#dc2626 !important}.tb-btn-pdf:hover{border-color:#dc2626 !important;background:#fef2f2 !important}
-.btn-primary{display:flex;align-items:center;gap:6px;background:#1e3a5f;color:#fff;border:none;padding:7px 14px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;transition:background .15s;flex-shrink:0}
-.btn-primary:hover{background:#1e4d8c}
-.btn-primary:disabled{opacity:.6;cursor:not-allowed}
-.btn-ghost{background:#f1f5f9;color:#475569;border:none;padding:7px 12px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;transition:all .15s}
-.btn-ghost:hover{background:#e2e8f0}
-
-/* ─── LINK BANNER ─── */
-.link-banner{display:flex;align-items:center;gap:10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:8px 14px;font-size:12px;color:#3730a3;flex-shrink:0;flex-wrap:wrap}
-.lag-input{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600}
-.lag-input input{width:48px;padding:2px 6px;border-radius:5px;border:1px solid #c7d2fe;font-size:12px;outline:none;text-align:center}
-
-/* ─── LEGEND BAR ─── */
-.legend-bar{display:flex;align-items:center;gap:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 14px;font-size:11px;color:#92400e;flex-shrink:0;flex-wrap:wrap}
-.leg-item{display:flex;align-items:center;gap:4px;font-weight:600}
-.leg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.leg-dot.green{background:#16a34a}
-.leg-dot.red{background:#dc2626}
-
-/* ─── WO FORM CARD ─── */
-.wo-form-card{background:#fff;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0;flex-shrink:0}
-.wo-form-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;color:#1e3a5f}
-.wo-form-head h4{font-size:13px;font-weight:700;color:#0f172a}
-.wo-form-grid{display:grid;grid-template-columns:2fr 2fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px}
-.field{display:flex;flex-direction:column;gap:3px}
-.fg-2{grid-column:span 1}
-.field label{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
-.field input,.field select{border:1px solid #e2e8f0;border-radius:6px;padding:6px 9px;font-size:12px;outline:none;color:#1e293b;transition:border-color .15s;background:#fff}
-.field input:focus{border-color:#1e3a5f;box-shadow:0 0 0 3px rgba(30,58,95,.08)}
-.wo-form-foot{display:flex;gap:8px}
-
-/* ─── TABLE WRAP ─── */
-.table-wrap{background:#fff;border-radius:10px;overflow:auto;border:1px solid #e2e8f0;flex:1;min-height:0}
-.main-table{width:100%;border-collapse:collapse;min-width:1400px}
-
-/* ─── TABLE HEAD ─── */
-.main-table thead tr{background:#1e3a5f;position:sticky;top:0;z-index:3}
-.main-table th{padding:8px 10px;text-align:left;font-size:9px;font-weight:700;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;border-right:1px solid rgba(255,255,255,.08)}
-.main-table th:last-child{border-right:none}
-.th-prev{background:#2d4d6e !important;color:rgba(255,200,100,.85) !important}
-.th-wbs{width:78px}.th-name{min-width:190px}.th-type{width:68px}.th-sqft{width:82px}
-.th-dept{width:115px}.th-per{width:105px}.th-dt{width:92px}
-.th-reason{width:145px}.th-days{width:48px;text-align:center}.th-prog{width:110px}
-.th-sts{width:98px}.th-rem{width:100px}.th-act{width:105px}
-
-/* ─── WO ROW ─── */
-.wo-row td{padding:0;border-bottom:2px solid #c7d2fe}
-.wo-bar{display:flex;align-items:center;gap:9px;background:linear-gradient(90deg,#1e3a5f 0%,#2d5282 100%);padding:8px 12px;min-height:44px}
-.exp-btn{background:rgba(255,255,255,.2);border:none;border-radius:4px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;flex-shrink:0;transition:background .15s}
-.exp-btn:hover{background:rgba(255,255,255,.35)}
-.wo-info{flex:1;min-width:0}
-.wo-name{font-size:12px;font-weight:700;color:#fff;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wo-tags{display:flex;align-items:center;gap:4px;margin-top:3px;flex-wrap:wrap}
-.tag{font-size:10px;background:rgba(255,255,255,.15);color:rgba(255,255,255,.85);padding:1px 6px;border-radius:3px;white-space:nowrap}
-.tag-dt{background:rgba(255,255,255,.1)}
-.tag-days{background:rgba(255,200,100,.2);color:rgba(255,220,120,1);font-weight:700}
-.wo-prog{display:flex;flex-direction:column;gap:2px;min-width:80px;flex-shrink:0}
-.wo-pbar{height:3px;background:rgba(255,255,255,.2);border-radius:99px;overflow:hidden}
-.wo-pfill{height:100%;background:rgba(255,255,255,.8);border-radius:99px}
-.wo-ptxt{font-size:10px;color:rgba(255,255,255,.7);font-weight:600;white-space:nowrap}
-.wo-actions{display:flex;align-items:center;gap:5px;flex-shrink:0}
-.wo-add{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.15);color:#fff;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600;transition:background .15s;white-space:nowrap}
-.wo-add:hover{background:rgba(255,255,255,.28)}
-.wo-del{background:rgba(239,68,68,.2);color:rgba(255,200,200,1);border:none;width:24px;height:24px;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}
-.wo-del:hover{background:rgba(239,68,68,.4)}
-
-/* ─── LINE ITEM ROW ─── */
-.li-row td{padding:5px 9px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#334155;vertical-align:middle;border-right:1px solid #f8fafc}
-.li-row:hover td{background:#f8fafc !important}
-.li-row:nth-child(even) td{background:#fafafa}
-.has-diff td:nth-child(7),.has-diff td:nth-child(8){background:#f0fdf4 !important;color:#15803d !important}
-.li-row.link-pick{cursor:crosshair !important}
-.li-row.link-pick:hover td{background:#eef2ff !important;outline:2px dashed #6366f1}
-.li-row.link-sel td{background:#e0e7ff !important}
-
-/* ─── CELLS ─── */
-.wbs-cell{display:flex;align-items:center;gap:3px}
-.exp-sm{background:#e2e8f0;border:none;border-radius:3px;width:15px;height:15px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#475569;flex-shrink:0;transition:all .15s}
-.exp-sm:hover{background:#1e3a5f;color:#fff}
-.no-exp{width:15px;flex-shrink:0;display:inline-block}
-.wbs-num{font-size:10px;color:#94a3b8;font-weight:700;white-space:nowrap}
-.dep-dot{background:#6366f1;color:#fff;border-radius:3px;width:12px;height:12px;display:inline-flex;align-items:center;justify-content:center;margin-left:2px;cursor:help;flex-shrink:0}
-.name-cell{display:flex;align-items:center;gap:5px}
-.li-name{font-size:12px;color:#1e293b;font-weight:500}
-.dep-pill{display:inline-flex;align-items:center;gap:3px;background:#ede9fe;color:#5b21b6;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;white-space:nowrap;flex-shrink:0}
-.type-pill{font-size:11px;font-weight:800;padding:2px 7px;border-radius:4px;display:inline-block;letter-spacing:.5px}
-.sqft-val{font-size:11px;color:#0369a1;font-weight:600}
-.dept-pill{font-size:10px;background:#f1f5f9;color:#475569;padding:2px 6px;border-radius:3px;white-space:nowrap;display:inline-block}
-.person-val{font-size:11px;color:#334155}
-.dt-val{font-size:11px;color:#475569;white-space:nowrap}
-.dt-new .dt-val{color:#15803d !important;font-weight:700}
-.td-prev{background:#fffbeb !important}
-.dt-prev-val{background:#fff7ed !important}
-.dt-strike{font-size:11px;color:#dc2626;text-decoration:line-through;white-space:nowrap}
-.dim{color:#d1d5db;font-size:11px}
-.reason-txt{font-size:11px;color:#94a3b8;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:143px}
-.reason-active{color:#a16207;font-weight:500}
-.days-val{font-size:11px;font-weight:700;color:#1e3a5f;display:block;text-align:center}
-.prog-row{display:flex;align-items:center;gap:5px}
-.prog-bg{flex:1;background:#e2e8f0;border-radius:99px;height:4px;overflow:hidden}
-.prog-fill{height:4px;border-radius:99px;transition:width .3s}
-.prog-txt{font-size:10px;color:#64748b;min-width:26px;text-align:right}
-.status-pill{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;white-space:nowrap;display:inline-block}
-.rem-txt{font-size:11px;color:#94a3b8;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:98px}
-
-/* ─── ACTIONS ─── */
-.act-row{display:flex;gap:3px;flex-wrap:wrap}
-.ib{border:none;border-radius:4px;cursor:pointer;width:21px;height:21px;display:flex;align-items:center;justify-content:center;transition:all .15s;position:relative}
-.ib:hover{filter:brightness(.88)}
-.ib:disabled{opacity:.5;cursor:not-allowed}
-.ib.add{background:#dcfce7;color:#15803d}
-.ib.edt{background:#dbeafe;color:#1d4ed8}
-.ib.del{background:#fee2e2;color:#b91c1c}
-.ib.save{background:#dcfce7;color:#15803d}
-.ib.canc{background:#f1f5f9;color:#475569}
-.ib.unlink{background:#ede9fe;color:#5b21b6}
-.ib.hist{background:#fff7ed;color:#d97706}
-.ib.hist-has{background:#fef3c7;color:#b45309;box-shadow:0 0 0 1px #fde68a}
-.hist-cnt{position:absolute;top:-4px;right:-4px;background:#ef4444;color:#fff;font-size:7px;font-weight:700;border-radius:99px;min-width:12px;height:12px;display:flex;align-items:center;justify-content:center;padding:0 2px;line-height:1}
-
-/* ─── EDIT INPUTS ─── */
-.ei{border:1px solid #93c5fd;border-radius:4px;padding:3px 6px;font-size:12px;outline:none;width:100%;color:#1e293b;box-shadow:0 0 0 2px rgba(59,130,246,.1)}
-.ei.num{width:70px}
-.es{border:1px solid #93c5fd;border-radius:4px;padding:3px 5px;font-size:11px;outline:none;width:100%;color:#1e293b;background:#fff}
-
-/* ─── ADD ROW ─── */
-.add-row td{background:#eef2ff;padding:5px 10px;border-bottom:1px solid #c7d2fe}
-.add-bar{display:flex;align-items:center;gap:7px}
-.add-pre{font-size:11px;font-weight:700;color:#6366f1;white-space:nowrap;min-width:26px}
-.add-in{border:1px solid #6366f1;border-radius:6px;padding:5px 9px;font-size:12px;outline:none;flex:1;color:#1e293b;box-shadow:0 0 0 3px rgba(99,102,241,.08)}
-.btn-ok{background:#1e3a5f;color:#fff;border:none;padding:5px 11px;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;transition:background .15s}
-.btn-ok:hover{background:#1e4d8c}
-.btn-ok:disabled{opacity:.6;cursor:not-allowed}
-.btn-no{background:#f1f5f9;color:#475569;border:none;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:12px;transition:all .15s}
-.btn-no:hover{background:#e2e8f0}
-
-/* ─── STATES ─── */
-.loading-state{display:flex;align-items:center;justify-content:center;gap:12px;height:180px;color:#94a3b8;font-size:13px}
-.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;color:#94a3b8;gap:10px;text-align:center}
-.empty-state p{font-size:14px;font-weight:600;color:#64748b}
-.empty-state span{font-size:12px;color:#94a3b8}
-.no-project{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:#94a3b8;gap:12px}
-.no-project h2{font-size:16px;color:#64748b;font-weight:600}
-.no-project p{font-size:12px}
-.spin{animation:rot 1s linear infinite;display:inline-block}
-.spin-lg{font-size:24px;animation:rot 1s linear infinite;color:#1e3a5f}
-@keyframes rot{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-
-/* ─── SCROLLBARS ─── */
-.table-wrap::-webkit-scrollbar,.content::-webkit-scrollbar{width:5px;height:5px}
-.table-wrap::-webkit-scrollbar-track,.content::-webkit-scrollbar-track{background:transparent}
-.table-wrap::-webkit-scrollbar-thumb,.content::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
-.table-wrap::-webkit-scrollbar-thumb:hover,.content::-webkit-scrollbar-thumb:hover{background:#94a3b8}
-.sidebar::-webkit-scrollbar{width:3px}
-.sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
-
-/* ─── MODALS ─── */
-.overlay{position:fixed;inset:0;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;z-index:10000;backdrop-filter:blur(4px);padding:16px}
-.modal{background:#fff;border-radius:14px;width:100%;max-width:600px;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.3);max-height:90vh;overflow:hidden;animation:modalIn .2s ease}
-@keyframes modalIn{from{transform:scale(.95) translateY(10px);opacity:0}to{transform:scale(1) translateY(0);opacity:1}}
-.modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #f1f5f9;flex-shrink:0;background:#fafbff}
-.modal-head-left{display:flex;align-items:center;gap:10px}
-.modal-title{font-size:14px;font-weight:700;color:#0f172a}
-.modal-sub{font-size:11px;color:#64748b;margin-top:1px}
-.icon-btn{background:#f1f5f9;border:none;width:26px;height:26px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#64748b;transition:all .15s}
-.icon-btn:hover{background:#fee2e2;color:#ef4444}
-.modal-body{overflow-y:auto;flex:1}
-.modal-body::-webkit-scrollbar{width:4px}
-.modal-body::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:2px}
-.modal-section{padding:14px 18px;border-bottom:1px solid #f8fafc}
-.modal-section:last-child{border-bottom:none}
-.section-hd{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px}
-.modal-foot{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-top:1px solid #f1f5f9;background:#fafbff;border-radius:0 0 14px 14px;gap:10px;flex-wrap:wrap;flex-shrink:0}
-.foot-chips{display:flex;gap:5px}
-.foot-chip{background:#f1f5f9;color:#64748b;font-size:10px;font-weight:600;padding:3px 8px;border-radius:4px}
-
-/* PDF Modal specifics */
-.radio-row{display:flex;gap:7px;margin-bottom:10px;flex-wrap:wrap}
-.radio-pill{display:flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;font-size:12px;color:#475569;transition:all .15s;user-select:none}
-.radio-pill input{display:none}
-.radio-pill:hover{border-color:#1e3a5f;color:#1e3a5f}
-.radio-pill.active{background:#eef2ff;border-color:#6366f1;color:#4338ca;font-weight:600}
-.date-range{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
-.date-f{display:flex;flex-direction:column;gap:3px}
-.date-f label{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
-.date-f input{border:1px solid #e2e8f0;border-radius:6px;padding:5px 8px;font-size:12px;outline:none;color:#1e293b}
-.date-f input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.08)}
-.date-sep{font-size:14px;color:#94a3b8;margin-top:13px;font-weight:700}
-.clr-btn{display:flex;align-items:center;gap:3px;background:#fee2e2;color:#b91c1c;border:none;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600;margin-top:13px}
-.month-row{display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:12px;color:#475569;font-weight:600}
-.month-row input{border:1px solid #e2e8f0;border-radius:6px;padding:5px 8px;font-size:12px;outline:none;color:#1e293b}
-.filter-badge{display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:600;margin-top:4px}
-.toggle-all{margin-left:auto;background:none;border:none;cursor:pointer;font-size:10px;color:#6366f1;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:none;letter-spacing:0}
-.toggle-all:hover{background:#eef2ff}
-.col-chips{display:flex;flex-wrap:wrap;gap:6px}
-.col-chip{display:flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;font-size:12px;color:#475569;transition:all .15s;user-select:none}
-.col-chip input{display:none}
-.chip-dot{width:6px;height:6px;border-radius:50%;background:#e2e8f0;flex-shrink:0;transition:background .15s}
-.col-chip:hover{border-color:#1e3a5f;color:#1e3a5f}
-.col-chip.on{background:#eef2ff;border-color:#6366f1;color:#4338ca;font-weight:600}
-.col-chip.on .chip-dot{background:#6366f1}
-.warn-pill{font-size:11px;color:#b91c1c;background:#fee2e2;padding:5px 10px;border-radius:5px;margin-top:6px}
-.layout-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.toggle-chip{display:flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid #e2e8f0;border-radius:7px;cursor:pointer;font-size:12px;color:#475569;transition:all .15s;user-select:none}
-.toggle-chip input{accent-color:#6366f1;width:13px;height:13px;cursor:pointer}
-.toggle-chip.on{background:#eef2ff;border-color:#6366f1;color:#4338ca;font-weight:600}
-.sort-pick{display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;font-weight:600}
-.sort-pick select{border:1px solid #e2e8f0;border-radius:6px;padding:5px 9px;font-size:12px;outline:none;color:#1e293b;background:#fff;cursor:pointer}
-.sort-pick select:focus{border-color:#6366f1}
-.btn-pdf{display:flex;align-items:center;gap:6px;background:#dc2626;color:#fff;border:none;padding:8px 16px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;transition:background .15s}
-.btn-pdf:hover{background:#b91c1c}
-.btn-pdf:disabled{opacity:.5;cursor:not-allowed}
-
-/* Date Reason Modal */
-.date-diff-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
-.diff-prev{flex:1;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px 12px}
-.diff-new{flex:1;background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px 12px}
-.diff-label{font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:4px;letter-spacing:.5px}
-.diff-prev .diff-label{color:#b91c1c}
-.diff-new .diff-label{color:#15803d}
-.diff-val{font-size:12px;font-weight:600}
-.diff-prev .diff-val{color:#7f1d1d}
-.diff-new .diff-val{color:#14532d}
-.field-group{margin-bottom:10px}
-.field-label{font-size:11px;font-weight:700;color:#475569;display:block;margin-bottom:6px}
-.reason-area{width:100%;border:1px solid #93c5fd;border-radius:7px;padding:8px 10px;font-size:13px;outline:none;resize:vertical;min-height:75px;color:#1e293b;box-shadow:0 0 0 3px rgba(59,130,246,.08);font-family:inherit}
-.reason-area:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.1)}
-.info-note{display:flex;align-items:flex-start;gap:6px;font-size:11px;color:#94a3b8;line-height:1.5}
-
-/* History Modal */
-.empty-hist{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;color:#94a3b8;text-align:center;gap:10px}
-.empty-hist p{font-size:13px;color:#64748b;font-weight:500}
-.empty-hist span{font-size:11px;color:#94a3b8}
-.hist-list{display:flex;flex-direction:column;gap:9px;padding:14px 18px}
-.hist-item{border:1px solid #e2e8f0;border-radius:9px;padding:11px 13px;background:#fafbff}
-.hist-latest{border-color:#c7d2fe;background:#eef2ff}
-.hist-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.hist-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;padding:2px 7px;border-radius:3px}
-.label-latest{background:#c7d2fe;color:#3730a3}
-.label-old{background:#f1f5f9;color:#64748b}
-.hist-time{font-size:10px;color:#94a3b8}
-.hist-dates{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
-.hist-prev{background:#fee2e2;padding:4px 8px;border-radius:5px;font-size:11px;color:#b91c1c;flex:1}
-.hist-new{background:#dcfce7;padding:4px 8px;border-radius:5px;font-size:11px;color:#15803d;flex:1}
-.hist-dtlabel{display:block;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;opacity:.7}
-.hist-reason{margin-top:7px;font-size:11px;color:#475569;background:#fff;border:1px solid #e2e8f0;border-radius:5px;padding:5px 8px}
-.hist-by{margin-top:5px;font-size:10px;color:#94a3b8}
-      `}</style>
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER — parse rich cascade string
+// ═══════════════════════════════════════════════════════════════════════════════
+function parseCascadeDetails(raw) {
+  if (!raw) return [];
+  if (!raw.includes("|")) {
+    return raw.split(",").map(name => ({
+      name: name.trim(), field: null, oldValue: null, newValue: null,
+    })).filter(e => e.name);
+  }
+  return raw.split(";").map(entry => {
+    const parts = entry.split("|");
+    return {
+      name:     parts[0]?.trim() || "",
+      field:    parts[1]?.trim() || "",
+      oldValue: parts[2]?.trim() || "",
+      newValue: parts[3]?.trim() || "",
+    };
+  }).filter(e => e.name);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AFFECTED ITEMS CELL
+// ═══════════════════════════════════════════════════════════════════════════════
+function AffectedItemsCell({ names }) {
+  const details = parseCascadeDetails(names);
+  if (details.length === 0) return <span style={{ color: "#cbd5e1", fontSize: 12 }}>None</span>;
+
+  const grouped = {};
+  details.forEach(d => {
+    if (!grouped[d.name]) grouped[d.name] = [];
+    grouped[d.name].push(d);
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 220 }}>
+      {Object.entries(grouped).map(([itemName, changes], gi) => (
+        <div key={gi} style={{ background: "#faf5ff", border: "1px solid #ddd6fe", borderLeft: "3px solid #7c3aed", borderRadius: "0 8px 8px 0", padding: "7px 10px" }}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: "#4c1d95", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
+            🔗 {itemName}
+          </div>
+          {changes.map((ch, ci) => {
+            if (!ch.field) return null;
+            const isDate = ch.field?.includes("Date") || ch.field?.includes("date");
+            const diff   = isDate ? daysBetween(ch.oldValue, ch.newValue) : 0;
+            return (
+              <div key={ci} style={{ display: "flex", flexDirection: "column", gap: 3, paddingTop: ci > 0 ? 6 : 0, borderTop: ci > 0 ? "1px dashed #ede9fe" : "none" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                  {FIELD_LABELS[ch.field] || ch.field}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ color: "#ef4444", fontWeight: 700, fontSize: 12, textDecoration: isDate ? "line-through" : "none" }}>
+                    {isDate ? fmt(ch.oldValue) : (ch.oldValue || "—")}
+                  </span>
+                  <span style={{ color: "#94a3b8", fontSize: 11 }}>→</span>
+                  <span style={{ color: "#059669", fontWeight: 700, fontSize: 12 }}>
+                    {isDate ? fmt(ch.newValue) : (ch.newValue || "—")}
+                  </span>
+                  {isDate && diff !== 0 && (
+                    <span style={{ background: diff > 0 ? "#fee2e2" : "#d1fae5", color: diff > 0 ? "#991b1b" : "#065f46", padding: "1px 7px", borderRadius: 20, fontSize: 11, fontWeight: 800 }}>
+                      {diff > 0 ? `+${diff}d` : `${diff}d`}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REVISIONS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function RevisionsPage({ history, lineItems, selProject, selWork, onDownload }) {
+  const byItem = {};
+  [...history]
+    .sort((a, b) => new Date(a.changedAt) - new Date(b.changedAt))
+    .forEach(h => {
+      const key = String(h.lineItemId || h.lineItemName);
+      if (!byItem[key]) byItem[key] = { name: h.lineItemName, changes: [] };
+      byItem[key].changes.push(h);
+    });
+
+  const items = Object.values(byItem);
+
+  if (items.length === 0) {
+    return (
+      <div>
+        <PageHeader
+          title="📊 Revisions — Line Item Wise"
+          subtitle={selWork ? `${selProject?.projectName} → ${selWork?.workName}` : "Select a work first"}
+        />
+        <EmptyState msg="No revision history yet. Date, status, and remark changes will appear here." />
+      </div>
+    );
+  }
+
+  const ROWS = [
+    { label: "What Changed", render: h => <span style={RS.fieldPill}>{FIELD_LABELS[h.field] || h.field}</span> },
+    { label: "From", render: h => <span style={{ color: "#ef4444", fontWeight: 700 }}>{h.field?.includes("Date") ? fmt(h.oldValue) : (h.oldValue || "—")}</span> },
+    { label: "To",   render: h => <span style={{ color: "#059669", fontWeight: 700 }}>{h.field?.includes("Date") ? fmt(h.newValue) : (h.newValue || "—")}</span> },
+    {
+      label: "Shift",
+      render: h => {
+        if (!h.field?.includes("Date")) return <span style={{ color: "#cbd5e1" }}>—</span>;
+        const d = daysBetween(h.oldValue, h.newValue);
+        if (!d) return <span style={{ color: "#cbd5e1" }}>—</span>;
+        return (
+          <span style={{ background: d > 0 ? "#fee2e2" : "#d1fae5", color: d > 0 ? "#991b1b" : "#065f46", padding: "2px 8px", borderRadius: 20, fontWeight: 800 }}>
+            {d > 0 ? `+${d}d` : `${d}d`}
+          </span>
+        );
+      },
+    },
+    { label: "Reason",     render: h => <span style={{ color: "#92400e", fontStyle: "italic" }}>{h.reason || "—"}</span> },
+    { label: "Changed At", render: h => <span style={{ color: "#64748b" }}>{fmtDateTime(h.changedAt)}</span> },
+    {
+      label: "Also Affected",
+      render: h => h.cascadedItemNames ? <AffectedItemsCell names={h.cascadedItemNames} /> : <span style={{ color: "#cbd5e1" }}>None</span>,
+    },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 21, fontWeight: 700, color: "#1e293b", borderLeft: "4px solid #06b6d4", paddingLeft: 12 }}>
+            📊 Revisions — Line Item Wise
+          </h2>
+          <p style={{ margin: "4px 0 0 16px", fontSize: 12, color: "#94a3b8" }}>
+            {selProject?.projectName} → {selWork?.workName}
+          </p>
+        </div>
+       <button onClick={onDownload}
+         style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", background: "#059669", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+         <FaFileExcel size={13} /> Export to Excel
+       </button>
+       {selWork?.id && (
+         <button
+           onClick={() => downloadSchedulePdf(selWork.id, selWork.workName)}
+           style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", background: "#1C3358", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+           <FaDownload size={13}/> Schedule PDF
+         </button>
+       )}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {items.map((item, idx) => {
+          const changes = item.changes;
+          return (
+            <div key={idx} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 16 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a", marginBottom: 8 }}>
+                LINE ITEM: {item.name}
+              </div>
+              <div style={{ height: 1, background: "#e2e8f0", marginBottom: 12 }} />
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={RS.rowLabel}>FIELD</th>
+                      {changes.map((h, i) => {
+                        const isDate  = h.field?.includes("Date");
+                        const diff    = isDate ? daysBetween(h.oldValue, h.newValue) : 0;
+                        const isDelay = diff > 0;
+                        return (
+                          <th key={i} style={{
+                            ...RS.revHead,
+                            background: isDelay ? "#fff7ed" : diff < 0 ? "#f0fdf4" : RS.revHead.background,
+                            color:      isDelay ? "#c2410c" : diff < 0 ? "#065f46" : RS.revHead.color,
+                          }}>
+                            <div>Rev {i + 1}</div>
+                            {isDate && diff !== 0 && (
+                              <div style={{ fontSize: 10, background: isDelay ? "#fee2e2" : "#d1fae5", color: isDelay ? "#991b1b" : "#065f46", borderRadius: 20, padding: "1px 7px", display: "inline-block", marginTop: 3, fontWeight: 800 }}>
+                                {isDelay ? `+${diff}d` : `${diff}d`}
+                              </div>
+                            )}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ROWS.map((row, ri) => (
+                      <tr key={ri} style={{ background: ri % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <td style={RS.rowLabel}>{row.label}</td>
+                        {changes.map((h, ci) => (
+                          <td key={ci} style={RS.cell}>{row.render(h)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOTIFICATIONS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function NotificationsPage({ notifications, onDismiss, onDismissAll }) {
+  const NOTIF_META = {
+    started:  { bg: "#dbeafe", color: "#1e40af", icon: "🚀", label: "Started" },
+    delayed:  { bg: "#fee2e2", color: "#991b1b", icon: "⚠️", label: "Delayed" },
+    early:    { bg: "#d1fae5", color: "#065f46", icon: "🎉", label: "Early Completion" },
+    upcoming: { bg: "#fef9c3", color: "#92400e", icon: "⏰", label: "Upcoming" },
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 21, fontWeight: 700, color: "#1e293b", borderLeft: "4px solid #f97316", paddingLeft: 12 }}>
+            🔔 Notifications
+          </h2>
+          <p style={{ margin: "4px 0 0 16px", fontSize: 12, color: "#94a3b8" }}>
+            {notifications.length} active alert{notifications.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        {notifications.length > 0 && (
+          <button onClick={onDismissAll} style={{ ...S.cancelBtn, display: "flex", alignItems: "center", gap: 6 }}>
+            <FaTimes size={11}/> Dismiss All
+          </button>
+        )}
+      </div>
+
+      {notifications.length === 0 ? (
+        <EmptyState msg="No active notifications. All clear! 🎉" />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {notifications.map(n => {
+            const meta = NOTIF_META[n.type] || NOTIF_META.upcoming;
+            return (
+              <div key={n.id} style={{
+                background: meta.bg, border: `1px solid ${meta.color}33`, borderLeft: `5px solid ${meta.color}`,
+                borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+              }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 18 }}>{meta.icon}</span>
+                    <span style={{ fontWeight: 700, color: meta.color, fontSize: 12, textTransform: "uppercase", letterSpacing: ".05em" }}>{meta.label}</span>
+                  </div>
+                  <div style={{ fontWeight: 700, color: "#1e293b", fontSize: 14, marginBottom: 3 }}>{n.label}</div>
+                  <div style={{ fontSize: 12, color: "#475569" }}>
+                    {n.msg}
+                    {n.item?.endDate && <span style={{ marginLeft: 10, color: "#94a3b8" }}>End Date: {fmt(n.item.endDate)}</span>}
+                  </div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                    <span style={{ ...S.deptTag, fontSize: 11 }}>{n.item?.department || "—"}</span>
+                    {n.item?.actionPerson && <span style={{ ...S.personTag, fontSize: 11 }}><FaUser size={8}/> {n.item.actionPerson}</span>}
+                    <StatusBadge status={n.item?.status} />
+                  </div>
+                </div>
+                <button onClick={() => onDismiss(n.id)} style={{ background: "none", border: "none", cursor: "pointer", color: meta.color, padding: 4, flexShrink: 0, marginTop: 2 }}>
+                  <FaTimes size={13}/>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotifBanner({ n, onDismiss }) {
+  const colors = { started: "#1e40af", delayed: "#991b1b", early: "#065f46", upcoming: "#92400e" };
+  const icons  = { started: "🚀", delayed: "⚠️", early: "🎉", upcoming: "⏰" };
+  const color  = colors[n.type] || "#475569";
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${color}33`, borderLeft: `4px solid ${color}`, borderRadius: 8, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ fontSize: 13, color: "#1e293b" }}>
+        <span style={{ marginRight: 8 }}>{icons[n.type]}</span>
+        <strong>{n.label}</strong>
+        <span style={{ color: "#64748b", marginLeft: 8 }}>{n.msg}</span>
+      </div>
+      <button onClick={onDismiss} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>
+        <FaTimes size={11}/>
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DAY OFFSET MODAL CONTENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+function DayOffsetModalContent({ item, field, dayInput, setDayInput, dayReason, setDayReason, onConfirm, onCancel, lineItems }) {
+  const days        = parseInt(dayInput, 10);
+  const validDays   = !isNaN(days) && days !== 0;
+  const isStartDate = field === "startDate";
+  const duration    = daysBetween(item.startDate, item.endDate);
+
+  const previewStart = isStartDate && validDays ? addDaysToDate(item.startDate, days) : null;
+  const previewEnd   = validDays
+    ? isStartDate
+      ? item.endDate ? addDaysToDate(item.endDate, days) : null
+      : addDaysToDate(item.endDate, days)
+    : null;
+
+  const linkedEntries = (item.linkedItemIds || "").split(",").filter(Boolean);
+  const linkedIds     = linkedEntries.map(e => Number(e.split(":")[0]));
+  const linkedItems   = lineItems.filter(i => linkedIds.includes(i.id));
+  const willCascade   = validDays && Math.abs(days) >= 2 && linkedItems.length > 0;
+
+  const badge = (n) => (
+    <span style={{
+      background: n > 0 ? "#fee2e2" : "#d1fae5",
+      color:      n > 0 ? "#991b1b" : "#065f46",
+      borderRadius: 20, padding: "2px 10px",
+      fontSize: 11, fontWeight: 800,
+    }}>
+      {n > 0 ? `+${n}` : n}d
+    </span>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+
+      <div style={{ fontWeight: 700, color: "#1e293b", fontSize: 15 }}>
+        {item.lineItemName}
+        <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: "#64748b" }}>
+          — Shift {isStartDate ? "Start Date" : "End Date"}
+        </span>
+      </div>
+
+      {/* Current date cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{
+          background: isStartDate ? "#eff6ff" : "#f8fafc",
+          border: `2px solid ${isStartDate ? "#93c5fd" : "#e2e8f0"}`,
+          borderRadius: 10, padding: 14,
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: isStartDate ? "#1d4ed8" : "#94a3b8", textTransform: "uppercase", marginBottom: 6 }}>
+            Start Date — {isStartDate ? "✏️ changing" : "🔒 stays fixed"}
+          </div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: isStartDate ? "#1e40af" : "#94a3b8" }}>
+            {fmt(item.startDate) || "—"}
+          </div>
+          {isStartDate && (
+            <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+              End date auto-adjusts ({duration}d duration kept)
+            </div>
+          )}
+          {!isStartDate && (
+            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4, fontStyle: "italic" }}>
+              will not change
+            </div>
+          )}
+        </div>
+
+        <div style={{
+          background: "#eff6ff",
+          border: "2px solid #93c5fd",
+          borderRadius: 10, padding: 14,
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", marginBottom: 6 }}>
+            End Date — ✏️ {isStartDate ? "auto-adjusts" : "changing"}
+          </div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#1e40af" }}>
+            {fmt(item.endDate) || "—"}
+          </div>
+          {isStartDate && (
+            <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+              shifts same days as start
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Input */}
+      <div>
+        <label style={S.lbl}>
+          Shift by how many days? <span style={{ color: "#ef4444" }}>*</span>
+          <span style={{ marginLeft: 8, fontSize: 10, color: "#94a3b8", fontWeight: 400, textTransform: "none" }}>
+            positive = forward · negative = backward
+          </span>
+        </label>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button style={S.quickBtn} onClick={() => setDayInput(v => String((parseInt(v, 10) || 0) - 7))}>−7</button>
+          <button style={S.quickBtn} onClick={() => setDayInput(v => String((parseInt(v, 10) || 0) - 1))}>−1</button>
+          <input
+            type="number"
+            value={dayInput}
+            onChange={e => setDayInput(e.target.value)}
+            placeholder="e.g. +5 or -3"
+            style={{ ...S.input, textAlign: "center", fontSize: 18, fontWeight: 700, flex: 1 }}
+            autoFocus
+          />
+          <button style={S.quickBtn} onClick={() => setDayInput(v => String((parseInt(v, 10) || 0) + 1))}>+1</button>
+          <button style={S.quickBtn} onClick={() => setDayInput(v => String((parseInt(v, 10) || 0) + 7))}>+7</button>
+        </div>
+      </div>
+
+      {/* Preview */}
+      {validDays && (
+        <div style={{
+          background: days > 0 ? "#fff7ed" : "#f0fdf4",
+          border: `1px solid ${days > 0 ? "#fdba74" : "#86efac"}`,
+          borderRadius: 10, padding: 14,
+        }}>
+          <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, marginBottom: 12, textTransform: "uppercase" }}>
+            Preview
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+            {/* Start row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", width: 90, flexShrink: 0 }}>START DATE</span>
+              {isStartDate ? (
+                <>
+                  <span style={{ color: "#ef4444", fontWeight: 700, fontSize: 13, textDecoration: "line-through" }}>{fmt(item.startDate)}</span>
+                  <span style={{ color: "#94a3b8" }}>→</span>
+                  <span style={{ color: "#059669", fontWeight: 700, fontSize: 13 }}>{fmt(previewStart)}</span>
+                  {badge(days)}
+                </>
+              ) : (
+                <span style={{ color: "#94a3b8", fontSize: 12, fontStyle: "italic" }}>
+                  {fmt(item.startDate)} — no change
+                </span>
+              )}
+            </div>
+
+            {/* End row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", width: 90, flexShrink: 0 }}>END DATE</span>
+              <span style={{ color: "#ef4444", fontWeight: 700, fontSize: 13, textDecoration: "line-through" }}>{fmt(item.endDate)}</span>
+              <span style={{ color: "#94a3b8" }}>→</span>
+              <span style={{ color: "#059669", fontWeight: 700, fontSize: 13 }}>{fmt(previewEnd)}</span>
+              {badge(days)}
+              {isStartDate && (
+                <span style={{ fontSize: 10, color: "#64748b", fontStyle: "italic" }}>auto ({duration}d kept)</span>
+              )}
+            </div>
+
+            {/* Cascade */}
+            {willCascade && (
+              <div style={{ padding: "8px 12px", background: "#ede9fe", borderRadius: 8, fontSize: 12, color: "#6d28d9", marginTop: 4 }}>
+                <div style={{ fontWeight: 700, marginBottom: 5 }}><FaLink size={10}/> Linked items will also shift:</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {linkedItems.map(li => (
+                    <span key={li.id} style={{ background: "#ddd6fe", color: "#4c1d95", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
+                      {li.lineItemName}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Reason */}
+      <div>
+        <label style={S.lbl}>Reason for Change <span style={{ color: "#ef4444" }}>*</span></label>
+        <textarea
+          value={dayReason}
+          onChange={e => setDayReason(e.target.value)}
+          placeholder="e.g. Client requested delay, material delivery delayed…"
+          style={{ ...S.input, height: 80, resize: "vertical" }}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button style={S.cancelBtn} onClick={onCancel}>Cancel</button>
+        <button style={S.saveBtn} onClick={onConfirm} disabled={!validDays || !dayReason.trim()}>
+          <FaSave size={11}/> Confirm & Record
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REVISION PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+function RevisionPanel({ item, revisions }) {
+  if (revisions.length === 0) {
+    return <div style={{ padding: "20px 28px", color: "#94a3b8", fontSize: 13 }}>No change history yet for this line item.</div>;
+  }
+
+  const dateRevs  = revisions.filter(h => h.field === "startDate" || h.field === "endDate");
+  const otherRevs = revisions.filter(h => h.field !== "startDate" && h.field !== "endDate");
+
+  return (
+    <div style={{ padding: "16px 28px 20px" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 12 }}>
+        📋 Revision History — {item.lineItemName}
+      </div>
+
+      {dateRevs.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", marginBottom: 8, textTransform: "uppercase" }}>Date Changes</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {dateRevs.map((h, i) => {
+              const diff = daysBetween(h.oldValue, h.newValue);
+              const isDelay = diff > 0;
+              return (
+                <div key={i} style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
+                  <div style={{ width: 36, display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: isDelay ? "#fee2e2" : "#d1fae5", color: isDelay ? "#991b1b" : "#065f46", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2 }}>R{i + 1}</div>
+                    {i < dateRevs.length - 1 && <div style={{ width: 2, flex: 1, background: "#e2e8f0", margin: "4px 0" }} />}
+                  </div>
+                  <div style={{ flex: 1, marginLeft: 10, marginBottom: 12, background: "#fff", border: "1px solid #e2e8f0", borderLeft: `3px solid ${isDelay ? "#ef4444" : "#10b981"}`, borderRadius: "0 8px 8px 0", padding: "10px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 6 }}>
+                      <div>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{FIELD_LABELS[h.field] || h.field}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+                          <span style={{ color: "#ef4444", fontWeight: 700, fontSize: 13, textDecoration: "line-through" }}>{fmt(h.oldValue)}</span>
+                          <span style={{ color: "#94a3b8" }}>→</span>
+                          <span style={{ color: "#059669", fontWeight: 700, fontSize: 13 }}>{fmt(h.newValue)}</span>
+                          {diff !== 0 && (
+                            <span style={{ background: isDelay ? "#fee2e2" : "#d1fae5", color: isDelay ? "#991b1b" : "#065f46", padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                              {diff > 0 ? `+${diff}` : diff} days
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", fontSize: 11, color: "#94a3b8" }}>
+                        <div>{fmtDateTime(h.changedAt)}</div>
+                        <div style={{ marginTop: 2 }}><FaUser size={8}/> {h.changedBy || "System"}</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 8, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "5px 10px", fontSize: 12, color: "#92400e" }}>
+                      📝 <strong>Reason:</strong> {h.reason || "No reason provided"}
+                    </div>
+                    {h.cascadedItemNames && (
+                      <div style={{ marginTop: 6, padding: "5px 10px", background: "#ede9fe", borderRadius: 6, fontSize: 11, color: "#6d28d9" }}>
+                        <FaLink size={9}/> <strong>Also shifted:</strong> {h.cascadedItemNames}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {otherRevs.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", marginBottom: 8, textTransform: "uppercase" }}>Other Edits</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {otherRevs.map((h, i) => (
+              <div key={i} style={{ background: "#fff", border: "1px solid #e2e8f0", borderLeft: "3px solid #8b5cf6", borderRadius: "0 8px 8px 0", padding: "8px 12px", fontSize: 12, minWidth: 200 }}>
+                <div style={{ fontWeight: 700, color: "#1e293b", fontSize: 11, marginBottom: 3 }}>{FIELD_LABELS[h.field] || h.field} changed</div>
+                {h.oldValue && (
+                  <div style={{ color: "#64748b" }}>
+                    <span style={{ textDecoration: "line-through", color: "#ef4444" }}>{h.oldValue || "—"}</span>
+                    {" → "}
+                    <span style={{ color: "#059669", fontWeight: 600 }}>{h.newValue || "—"}</span>
+                  </div>
+                )}
+                <div style={{ marginTop: 4, color: "#92400e", fontSize: 11 }}>📝 {h.reason || "No reason"}</div>
+                <div style={{ marginTop: 3, color: "#94a3b8", fontSize: 10 }}>{fmtDateTime(h.changedAt)} · {h.changedBy || "System"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DATE SHIFT CELL
+// ═══════════════════════════════════════════════════════════════════════════════
+function DateShiftCell({ value, onShift }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 110 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>
+        {value ? fmt(value) : <span style={{ color: "#cbd5e1" }}>—</span>}
+      </div>
+      {value && (
+        <button onClick={onShift} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, cursor: "pointer", background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1d4ed8", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          ± Days
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HISTORY CARD
+// ═══════════════════════════════════════════════════════════════════════════════
+function HistoryCard({ h, index }) {
+  const isDateField = h.field?.includes("Date") || h.field?.includes("date");
+  const isGeneral   = h.field === "general";
+  const diff        = isDateField ? daysBetween(h.oldValue, h.newValue) : 0;
+  const hasCascade  = h.cascadedItemNames?.length > 0;
+  const fieldLabel  = FIELD_LABELS[h.field] || h.field || "General Edit";
+
+  let accentColor = "#3b82f6";
+  if (isDateField && diff > 0) accentColor = "#ef4444";
+  if (isDateField && diff < 0) accentColor = "#059669";
+  if (h.field === "status")    accentColor = "#8b5cf6";
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderLeft: `4px solid ${accentColor}`, borderRadius: 10, padding: "14px 16px", boxShadow: "0 1px 3px rgba(0,0,0,.03)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+            <span style={{ fontWeight: 700, color: "#1e293b", fontSize: 14 }}>{h.lineItemName || "Unknown"}</span>
+            <span style={{ background: accentColor + "18", color: accentColor, padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700 }}>
+              {isGeneral ? "EDIT" : fieldLabel.toUpperCase()}
+            </span>
+            {hasCascade && <span style={{ background: "#ede9fe", color: "#6d28d9", padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700 }}>CASCADE</span>}
+          </div>
+          {!isGeneral && (
+            <div style={{ fontSize: 13, color: "#475569", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ color: "#94a3b8" }}>{fieldLabel}:</span>
+              <span style={{ color: "#ef4444", fontWeight: 700, textDecoration: "line-through" }}>{isDateField ? fmt(h.oldValue) : (h.oldValue || "—")}</span>
+              <span style={{ color: "#94a3b8" }}>→</span>
+              <span style={{ color: "#059669", fontWeight: 700 }}>{isDateField ? fmt(h.newValue) : (h.newValue || "—")}</span>
+              {isDateField && diff !== 0 && (
+                <span style={{ background: diff > 0 ? "#fee2e2" : "#d1fae5", color: diff > 0 ? "#991b1b" : "#065f46", padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                  {diff > 0 ? `+${diff} days delayed` : `${Math.abs(diff)} days earlier`}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 11, color: "#94a3b8" }}>{fmtDateTime(h.changedAt)}</div>
+          <div style={{ fontSize: 12, color: "#475569", marginTop: 2, display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+            <FaUser size={9} color="#94a3b8"/> {h.changedBy || "System"}
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop: 10, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, padding: "7px 12px", fontSize: 12, color: "#92400e", display: "flex", gap: 6, alignItems: "flex-start" }}>
+        <span style={{ fontWeight: 700, flexShrink: 0 }}>📝 Reason:</span>
+        <span>{h.reason || "No reason provided"}</span>
+      </div>
+      {hasCascade && (
+        <div style={{ marginTop: 8, padding: "6px 10px", background: "#ede9fe", borderRadius: 7, fontSize: 11, color: "#6d28d9", display: "flex", gap: 5, alignItems: "center" }}>
+          <FaLink size={9}/>
+          <span><strong>Also shifted:</strong> {h.cascadedItemNames}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORK FORM
+// ═══════════════════════════════════════════════════════════════════════════════
+function WorkForm({ initial, projects, selectedProject, onProjectSelect, onSave, onCancel }) {
+  const [form, setForm] = useState({ workName: "", workOrderNo: "", startDate: "", endDate: "", description: "", ...initial });
+  const [projId, setProjId] = useState(initial?.project?.projectId || selectedProject?.projectId || "");
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const handleSave = () => {
+    if (!projId) { alert("Please select a project"); return; }
+    if (!form.workName.trim()) { alert("Work Name is required"); return; }
+    const proj = projects.find(p => String(p.projectId) === String(projId));
+    if (proj) onProjectSelect(proj);
+    onSave(form);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <label style={S.lbl}>Project <span style={{ color: "#ef4444" }}>*</span></label>
+        <select value={projId} onChange={e => setProjId(e.target.value)} style={S.input}>
+          <option value="">— Select Project —</option>
+          {projects.map(p => <option key={p.projectId} value={p.projectId}>{p.projectName} ({p.projectCode})</option>)}
+        </select>
+      </div>
+      <div style={S.row2}>
+        <Field label="Work Name *"    value={form.workName}    onChange={v => f("workName", v)}    placeholder="e.g. Toilet Casement Window Work" />
+        <Field label="Work Order No." value={form.workOrderNo} onChange={v => f("workOrderNo", v)} placeholder="e.g. ARPL/2025/206" />
+      </div>
+      <div style={S.row2}>
+        <Field label="Start Date" value={form.startDate} onChange={v => f("startDate", v)} type="date" />
+        <Field label="End Date"   value={form.endDate}   onChange={v => f("endDate", v)}   type="date" />
+      </div>
+      <Field label="Description / Notes" value={form.description} onChange={v => f("description", v)} placeholder="Optional notes" />
+      <FormActions onSave={handleSave} onCancel={onCancel} />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LINE ITEM FORM
+// ═══════════════════════════════════════════════════════════════════════════════
+function LineItemForm({ initial, existingItems, onSave, onCancel }) {
+  const parseLinks = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    return raw.split(",").filter(Boolean).map(e => {
+      const parts = e.split(":");
+      return { targetId: Number(parts[0]), trigger: parts[1] || "END_TO_START", offsetDays: Number(parts[2] || 0) };
+    });
+  };
+
+  const [form, setForm] = useState({
+    srNo: "", lineItemName: "", startDate: "", endDate: "",
+    department: "", actionPerson: "", status: "NOT STARTED", remark: "",
+    ...initial,
+    linkedItemIds: parseLinks(initial?.linkedItemIds),
+  });
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const others = existingItems.filter(i => i.id !== form.id);
+  const isLinked = (id) => form.linkedItemIds.some(l => l.targetId === id);
+
+  const toggleLink = (id) => {
+    setForm(p => {
+      const exists = p.linkedItemIds.some(l => l.targetId === id);
+      if (exists) return { ...p, linkedItemIds: p.linkedItemIds.filter(l => l.targetId !== id) };
+      return { ...p, linkedItemIds: [...p.linkedItemIds, { targetId: id, trigger: "END_TO_START", offsetDays: 0 }] };
+    });
+  };
+
+  const updateLink = (id, field, value) => {
+    setForm(p => ({
+      ...p,
+      linkedItemIds: p.linkedItemIds.map(l =>
+        l.targetId === id ? { ...l, [field]: field === "offsetDays" ? Number(value) : value } : l
+      ),
+    }));
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={S.row2}>
+        <Field label="SR No"            value={form.srNo}        onChange={v => f("srNo", v)}        type="number" />
+        <Field label="Line Item Name *" value={form.lineItemName} onChange={v => f("lineItemName", v)} placeholder="e.g. SITE SURVEY" />
+      </div>
+      <div style={S.row2}>
+        <Field label="Start Date *" value={form.startDate} onChange={v => f("startDate", v)} type="date" />
+        <Field label="End Date *"   value={form.endDate}   onChange={v => f("endDate", v)}   type="date" />
+      </div>
+      {initial?.id && (
+        <div style={{ background: "#fef9c3", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#92400e" }}>
+          💡 To change dates with cascade & reason tracking, use the <strong>± Days</strong> button on the table row.
+        </div>
+      )}
+      <div style={S.row2}>
+        <div>
+          <label style={S.lbl}>Department</label>
+          <select value={form.department} onChange={e => f("department", e.target.value)} style={S.input}>
+            <option value="">— Select —</option>
+            {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
+          </select>
+        </div>
+        <Field label="Assigned Person" value={form.actionPerson} onChange={v => f("actionPerson", v)} placeholder="e.g. SURAJ" />
+      </div>
+      <div style={S.row2}>
+        <div>
+          <label style={S.lbl}>Status</label>
+          <select value={form.status} onChange={e => f("status", e.target.value)} style={S.input}>
+            {STATUS_OPTIONS.map(st => <option key={st}>{st}</option>)}
+          </select>
+        </div>
+        <Field label="Remark" value={form.remark} onChange={v => f("remark", v)} placeholder="Optional" />
+      </div>
+
+      {others.length > 0 && (
+        <div>
+          <label style={S.lbl}><FaLink size={9} style={{ marginRight: 4 }}/> Link to Other Line Items</label>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: 14, marginTop: 8 }}>
+            <p style={{ fontSize: 11, color: "#64748b", margin: "0 0 12px 0" }}>
+              Select items and define <strong>when this item should start</strong> relative to the linked item.
+              Note: Linking changes are <strong>not tracked</strong> in revision history.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {others.map(i => {
+                const linked  = isLinked(i.id);
+                const linkDef = form.linkedItemIds.find(l => l.targetId === i.id);
+                return (
+                  <div key={i.id} style={{ border: `1px solid ${linked ? "#a78bfa" : "#e2e8f0"}`, borderRadius: 8, padding: "10px 12px", background: linked ? "#faf5ff" : "#fff", transition: "all .15s" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <input type="checkbox" checked={linked} onChange={() => toggleLink(i.id)} style={{ cursor: "pointer" }} />
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontWeight: 600, color: "#1e293b", fontSize: 13 }}>{i.lineItemName}</span>
+                        <span style={{ marginLeft: 8, fontSize: 11, color: "#94a3b8" }}>{fmt(i.startDate)} → {fmt(i.endDate)}</span>
+                      </div>
+                      <StatusBadge status={i.status} />
+                    </div>
+                    {linked && linkDef && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #e2e8f0", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div>
+                          <label style={{ ...S.lbl, marginBottom: 4 }}>Trigger: When should THIS item start?</label>
+                          <select value={linkDef.trigger} onChange={e => updateLink(i.id, "trigger", e.target.value)} style={{ ...S.input, fontSize: 12 }}>
+                            {LINK_TRIGGER_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <label style={{ ...S.lbl, marginBottom: 4 }}>+ Offset Days after trigger (optional)</label>
+                            <input type="number" value={linkDef.offsetDays || 0} onChange={e => updateLink(i.id, "offsetDays", e.target.value)} placeholder="0" style={{ ...S.input, fontSize: 12 }} />
+                          </div>
+                          <div style={{ fontSize: 11, color: "#6d28d9", background: "#ede9fe", padding: "8px 12px", borderRadius: 8, marginTop: 18, whiteSpace: "nowrap" }}>
+                            {linkDef.trigger === "END_TO_START"    && `Starts when ${i.lineItemName} ends${linkDef.offsetDays ? ` + ${linkDef.offsetDays}d` : ""}`}
+                            {linkDef.trigger === "START_TO_START"  && `Starts when ${i.lineItemName} starts${linkDef.offsetDays ? ` + ${linkDef.offsetDays}d` : ""}`}
+                            {linkDef.trigger === "MIDDLE_TO_START" && `Starts at midpoint of ${i.lineItemName}${linkDef.offsetDays ? ` + ${linkDef.offsetDays}d` : ""}`}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <FormActions onSave={() => onSave(form)} onCancel={onCancel} />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SMALL REUSABLE COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+function ProjectCard({ p, onOpen, onHistory, isNew, onHide, onUnhide, hidden }) {
+  const meta = PROJECT_STATUS_META[p.projectStatus] || PROJECT_STATUS_META["PLANNED"];
+  return (
+    <div style={{ ...S.projectCard, opacity: hidden ? 0.65 : 1 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={S.cardTitle}>{p.projectName}</div>
+            {isNew ? (
+              <span style={{ background: "#dcfce7", color: "#15803d", padding: "2px 9px", borderRadius: 20, fontSize: 10, fontWeight: 800 }}>
+                🆕 NEW
+              </span>
+            ) : (
+              <span style={{ background: "#ede9fe", color: "#6d28d9", padding: "2px 9px", borderRadius: 20, fontSize: 10, fontWeight: 800 }}>
+                📅 PLANNED
+              </span>
+            )}
+          </div>
+          <div style={S.cardSub}>📋 {p.projectCode}</div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+          <span style={{ ...S.pill, background: meta.bg, color: meta.color }}>{p.projectStatus || "—"}</span>
+          {onHide && (
+            <button onClick={onHide} title="Hide from Planning (not deleted)"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#cbd5e1", fontSize: 11, padding: 2 }}>
+              <FaTimes size={11}/>
+            </button>
+          )}
+        </div>
+      </div>
+      <div style={S.cardMeta}>
+        {p.clientName     && <span>🏢 {p.clientName}</span>}
+        {p.city           && <span>📍 {p.city}</span>}
+        {p.projectManager && <span>👤 {p.projectManager}</span>}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <button style={{ ...S.openBtn, flex: 1 }} onClick={onOpen}>Open Works →</button>
+        <button style={S.histBtn} onClick={onHistory}><FaHistory size={11}/> History</button>
+        {onUnhide && (
+          <button onClick={onUnhide} style={{ ...S.histBtn, background: "#d1fae5", color: "#065f46", borderColor: "#6ee7b7" }}>
+            <FaCheck size={10}/> Unhide
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkCard({ w, onOpen, onEdit, onDelete, onHistory, onSaveTemplate }) {
+  return (
+    <div style={S.workCard}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={S.cardTitle}>{w.workName}</div>
+          <div style={S.cardSub}>📄 {w.workOrderNo}</div>
+        </div>
+        <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+          <ActionBtn color="#8b5cf6" title="History"          onClick={onHistory}><FaHistory size={11}/></ActionBtn>
+          <ActionBtn color="#2563eb" title="Edit"             onClick={onEdit}><FaEdit size={11}/></ActionBtn>
+          <ActionBtn color="#ef4444" title="Delete"           onClick={onDelete}><FaTrash size={11}/></ActionBtn>
+          <ActionBtn color="#10b981" title="Save as Template" onClick={onSaveTemplate}><FaLayerGroup size={11}/></ActionBtn>
+        </div>
+      </div>
+      {(w.startDate || w.endDate) && (
+        <div style={S.cardMeta}>
+          <FaCalendarAlt size={10} style={{ color: "#94a3b8" }} />
+          {fmt(w.startDate)} → {fmt(w.endDate)}
+        </div>
+      )}
+      {w.description && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, fontStyle: "italic" }}>{w.description}</div>}
+      <button style={{ ...S.openBtn, marginTop: 14, width: "100%" }} onClick={onOpen}>Open Line Items →</button>
+    </div>
+  );
+}
+
+function Modal({ title, children, onClose, wide }) {
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{ ...S.modalBox, maxWidth: wide ? 760 : 580 }} onClick={e => e.stopPropagation()}>
+        <div style={S.modalHead}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>{title}</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 4 }}>
+            <FaTimes size={15}/>
+          </button>
+        </div>
+        <div style={{ padding: "20px 22px", overflowY: "auto", flex: 1 }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, type = "text", placeholder = "" }) {
+  return (
+    <div>
+      <label style={S.lbl}>{label}</label>
+      <input type={type} value={value || ""} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={S.input} />
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const m = STATUS_META[status] || STATUS_META["NOT STARTED"];
+  return (
+    <span style={{ ...S.pill, background: m.bg, color: m.color, display: "inline-flex", alignItems: "center", gap: 4 }}>
+      {m.icon} {status || "—"}
+    </span>
+  );
+}
+function KpiCard({ label, value, icon, color, sub, onClick }) {
+  return (
+    <div style={{ ...S.kpiCard, borderTop: `4px solid ${color}`, cursor: onClick ? "pointer" : "default" }} onClick={onClick}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#1e293b" }}>{value}</div>
+          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 600, marginTop: 2 }}>{label}</div>
+          {sub && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>{sub}</div>}
+        </div>
+        <div style={{ fontSize: 24 }}>{icon}</div>
+      </div>
+    </div>
+  );
+}
+
+function Breadcrumb({ parts }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16, fontSize: 12 }}>
+      {parts.map((part, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <FaChevronRight style={{ color: "#cbd5e1", fontSize: 9 }} />}
+          {part.onClick
+            ? <span style={{ color: "#3b82f6", cursor: "pointer", fontWeight: 500 }} onClick={part.onClick}>{part.label}</span>
+            : <span style={{ color: "#1e293b", fontWeight: 700 }}>{part.label}</span>}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function PageHeader({ title, subtitle, children }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: 21, fontWeight: 700, color: "#1e293b", borderLeft: "4px solid #10b981", paddingLeft: 12 }}>{title}</h2>
+        {subtitle && <p style={{ margin: "4px 0 0 16px", fontSize: 12, color: "#94a3b8" }}>{subtitle}</p>}
+      </div>
+      {children && <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{children}</div>}
+    </div>
+  );
+}
+
+function SectionTitle({ children }) {
+  return (
+    <h3 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".06em" }}>
+      {children}
+    </h3>
+  );
+}
+
+function SearchBar({ value, onChange, placeholder }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 14px", marginBottom: 20, maxWidth: 420 }}>
+      <FaSearch style={{ color: "#94a3b8", flexShrink: 0 }} size={13}/>
+      <input style={{ border: "none", outline: "none", fontSize: 13, flex: 1, color: "#334155", background: "transparent" }}
+        placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} />
+      {value && (
+        <button onClick={() => onChange("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 0 }}>
+          <FaTimes size={11}/>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PrimaryBtn({ icon, label, onClick }) {
+  return (
+    <button onClick={onClick} style={{ background: "#10b981", color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+      {icon} {label}
+    </button>
+  );
+}
+
+function SecondaryBtn({ icon, label, onClick }) {
+  return (
+    <button onClick={onClick} style={{ background: "#ede9fe", color: "#6d28d9", border: "1px solid #c4b5fd", borderRadius: 8, padding: "9px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+      {icon} {label}
+    </button>
+  );
+}
+
+function ActionBtn({ color, title, children, onClick }) {
+  return (
+    <button onClick={onClick} title={title}
+      style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "5px 8px", cursor: "pointer", color, display: "flex", alignItems: "center" }}>
+      {children}
+    </button>
+  );
+}
+
+function FormActions({ onSave, onCancel }) {
+  return (
+    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4, paddingTop: 12, borderTop: "1px solid #f1f5f9" }}>
+      <button onClick={onCancel} style={S.cancelBtn}>Cancel</button>
+      <button onClick={onSave}   style={S.saveBtn}><FaSave size={11}/> Save</button>
+    </div>
+  );
+}
+
+function EmptyState({ msg }) {
+  return (
+    <div style={{ padding: 60, textAlign: "center", color: "#94a3b8", background: "#fff", borderRadius: 14, border: "1px dashed #e2e8f0", gridColumn: "1 / -1" }}>
+      <div style={{ fontSize: 38, marginBottom: 10 }}>📭</div>
+      <div style={{ fontSize: 14 }}>{msg}</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════════════════════
+const S = {
+  shell:       { display: "flex", height: "100vh", overflow: "hidden", fontFamily: "'Segoe UI', 'Inter', sans-serif", background: "#f1f5f9" },
+  sidebar:     { background: "#0f172a", display: "flex", flexDirection: "column", transition: "width .2s ease", flexShrink: 0, overflow: "hidden" },
+  sideTop:     { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 12px 10px" },
+  brandBlock:  { display: "flex", alignItems: "center", gap: 8 },
+  brandIcon:   { fontSize: 18 },
+  brandText:   { color: "#fff", fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" },
+  collapseBtn: { background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11, padding: 4, flexShrink: 0 },
+  navItem:     { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all .15s", textAlign: "left", width: "100%" },
+  navLabel:    { whiteSpace: "nowrap", overflow: "hidden" },
+  sideContext: { margin: "0 10px 10px", padding: "10px 12px", background: "#1e293b", borderRadius: 8, display: "flex", flexDirection: "column", gap: 6 },
+  sideCtxItem: { display: "flex", alignItems: "center", gap: 6, overflow: "hidden" },
+  sideBack:    { margin: "8px 10px 14px", padding: "9px 12px", background: "#1e293b", border: "none", color: "#64748b", borderRadius: 8, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", gap: 7 },
+
+  main:        { flex: 1, overflow: "auto", padding: "28px 30px" },
+  toast:       { position: "fixed", top: 18, right: 20, zIndex: 9999, padding: "11px 18px", borderRadius: 10, fontWeight: 600, fontSize: 13, boxShadow: "0 8px 24px rgba(0,0,0,.12)" },
+
+  infoBanner:  { display: "flex", alignItems: "flex-start", gap: 10, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10, padding: "10px 16px", marginBottom: 14, fontSize: 12, color: "#1e40af" },
+
+  kpiRow:      { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 14, marginBottom: 28 },
+  kpiCard:     { background: "#fff", borderRadius: 12, padding: "16px 18px", border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,.04)" },
+
+  cardGrid:    { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 18 },
+  projectCard: { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,.04)", borderTop: "4px solid #10b981" },
+  workCard:    { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,.04)", borderTop: "4px solid #3b82f6" },
+  cardTitle:   { fontSize: 15, fontWeight: 700, color: "#1e293b" },
+  cardSub:     { fontSize: 12, color: "#64748b", marginTop: 3 },
+  cardMeta:    { display: "flex", gap: 12, fontSize: 11, color: "#94a3b8", marginTop: 8, flexWrap: "wrap", alignItems: "center" },
+
+  openBtn:     { padding: "8px 14px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontWeight: 600, color: "#1e293b", fontSize: 12 },
+  histBtn:     { padding: "8px 12px", background: "#ede9fe", border: "1px solid #c4b5fd", borderRadius: 8, cursor: "pointer", fontWeight: 600, color: "#6d28d9", fontSize: 11, display: "flex", alignItems: "center", gap: 5 },
+  pill:        { padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700 },
+
+  lineItemStrip: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 },
+  stripPill:     { display: "flex", alignItems: "center", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 },
+
+  tableWrap:   { overflowX: "auto", background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,.04)" },
+  table:       { width: "100%", borderCollapse: "collapse", fontSize: 13 },
+  thead:       { background: "#f8fafc", borderBottom: "2px solid #e2e8f0" },
+  tr:          { borderBottom: "1px solid #f1f5f9" },
+  th:          { padding: "11px 13px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".05em", whiteSpace: "nowrap" },
+  td:          { padding: "9px 13px", color: "#334155", verticalAlign: "middle" },
+  deptTag:     { background: "#f0fdf4", color: "#065f46", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 },
+  personTag:   { display: "inline-flex", alignItems: "center", gap: 4, background: "#eff6ff", color: "#1e40af", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 },
+  linkPill:    { background: "#ede9fe", color: "#6d28d9", padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 },
+
+  histSummary: { display: "flex", gap: 0, marginBottom: 20, background: "#fff", borderRadius: 10, border: "1px solid #e2e8f0", overflow: "hidden" },
+  histSumItem: { flex: 1, padding: "16px 20px", display: "flex", flexDirection: "column", gap: 3, borderRight: "1px solid #f1f5f9" },
+
+  overlay:     { position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", backdropFilter: "blur(4px)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 },
+  modalBox:    { background: "#fff", borderRadius: 14, width: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,.2)" },
+  modalHead:   { padding: "15px 22px", borderBottom: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center" },
+
+  lbl:         { display: "block", fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 5 },
+  input:       { width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, outline: "none", boxSizing: "border-box", color: "#334155", background: "#fff", fontFamily: "inherit" },
+  row2:        { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 },
+  saveBtn:     { background: "#10b981", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 },
+  cancelBtn:   { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", color: "#64748b" },
+  quickBtn:    { background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 7, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", color: "#334155", flexShrink: 0 },
+  viewAllBtn:  { background: "none", border: "1px dashed #e2e8f0", borderRadius: 8, padding: "8px 16px", cursor: "pointer", color: "#64748b", fontSize: 12, textAlign: "center" },
+};
+
+const RS = {
+  revHead: {
+    background: "#f8fafc", color: "#64748b",
+    padding: "6px 12px", textAlign: "center",
+    fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+    borderLeft: "1px solid #e2e8f0", letterSpacing: ".05em",
+  },
+  rowLabel: {
+    position: "sticky", left: 0, zIndex: 1,
+    background: "#f8fafc", color: "#475569",
+    padding: "10px 14px", fontWeight: 700,
+    fontSize: 11, textTransform: "uppercase",
+    letterSpacing: ".05em", whiteSpace: "nowrap",
+    borderRight: "2px solid #e2e8f0",
+    verticalAlign: "top",
+  },
+  cell: {
+    padding: "10px 14px",
+    verticalAlign: "top",
+    fontSize: 12,
+    color: "#334155",
+  },
+  fieldPill: {
+    background: "#eff6ff", color: "#1e40af",
+    padding: "3px 9px", borderRadius: 20,
+    fontSize: 11, fontWeight: 700,
+    display: "inline-block",
+  },
+};
