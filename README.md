@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Status-In%20Development-yellow?style=for-the-badge"/>
 </p>
 
----
+--- 
 
 ## 📌 Project Overview
 
@@ -25,7 +25,6 @@ The **ERP Dispatch & Fleet Management System** is a full-stack enterprise resour
 | **Frontend** | React.js, Tailwind CSS |
 | **Backend** | Java, Spring Boot, REST API |
 | **Database** | MySQL |
-| **Authentication** | JWT (JSON Web Token) |
 | **Deployment** | Netlify (Frontend), Render (Backend) |
 | **Version Control** | Git & GitHub |
 
