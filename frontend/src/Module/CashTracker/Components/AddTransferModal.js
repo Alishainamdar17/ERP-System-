@@ -21,9 +21,9 @@ const s = {
 function AddTransferModal({ projects = [], onClose, onCreated }) {
   const today = new Date().toISOString().split("T")[0];
   const [form, setForm] = useState({ fromProjectId: "", toProjectId: "", amount: "", transferDate: today, note: "" });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);gf
   const [error, setError] = useState("");
-
+  
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
   const handleSubmit = async () => {
@@ -39,7 +39,7 @@ function AddTransferModal({ projects = [], onClose, onCreated }) {
         amount: Number(form.amount),
         transferDate: form.transferDate,
         note: form.note.trim(),
-      });
+      }); 
       onCreated(created);
       onClose();
     } catch (err) {
